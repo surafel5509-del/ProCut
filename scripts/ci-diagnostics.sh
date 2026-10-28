@@ -10,6 +10,7 @@ set -uo pipefail
 
 LOG_DIR="${1:-build-logs}"
 MAX_CHARS="${MAX_CHARS:-60000}"
+CHECK_NAME="${CHECK_NAME:-ci-diagnostics}"
 API="https://api.github.com"
 
 : "${GH_TOKEN:?GH_TOKEN must be set}"
@@ -56,14 +57,14 @@ limit = int(sys.argv[1])
 path = os.environ["LOG_PATH"]
 data = open(path, encoding="utf-8", errors="replace").read()
 text = data[-limit:]
-title = "CI diagnostics"
+title = os.environ.get("CHECK_NAME", "CI diagnostics")
 summary = (
-    "The build failed. The tail of the Gradle output is in the details below.\n\n"
+    "The job failed. The tail of the captured output is in the details below.\n\n"
     f"Run: {os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
     f"{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
 )
 print(json.dumps({
-    "name": "ci-diagnostics",
+    "name": os.environ.get("CHECK_NAME", "ci-diagnostics"),
     "head_sha": os.environ["GITHUB_SHA"],
     "status": "completed",
     "conclusion": "neutral",
