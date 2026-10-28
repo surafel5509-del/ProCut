@@ -29,7 +29,7 @@ class DeviceCapabilities @Inject constructor() {
         }
     }
 
-    fun supportsH264Encoding(): Boolean = videoCapabilities().isNotEmpty()
+    fun supportsH264Encoding(): Boolean = avcVideoCapabilities.isNotEmpty()
 
     fun hasAacEncoder(): Boolean = encoderInfos.any { info ->
         info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_AUDIO_AAC, ignoreCase = true) }
@@ -37,10 +37,17 @@ class DeviceCapabilities @Inject constructor() {
 
     fun supportsResolution(width: Int, height: Int, fps: Int): Boolean {
         if (!supportsH264Encoding()) return false
-        return videoCapabilities().any { capabilities ->
-            runCatching { capabilities.isSizeAndRateSupported(width, height, fps.toDouble()) }
-                .getOrElse { capabilities.isSizeSupported(width, height) }
+        for (capabilities in avcVideoCapabilities) {
+            val supported: Boolean = try {
+                capabilities.isSizeAndRateSupported(width, height, fps.toDouble())
+            } catch (error: IllegalArgumentException) {
+                // Encoders reject frame rates outside their supported range with this exception;
+                // fall back to a size-only check instead of failing the whole query.
+                capabilities.isSizeSupported(width, height)
+            }
+            if (supported) return true
         }
+        return false
     }
 
     /** Largest supported export resolution for [aspectRatio], checked smallest to largest. */
@@ -64,8 +71,23 @@ class DeviceCapabilities @Inject constructor() {
             supportsResolution(spec.width, spec.height, spec.fps)
         }.ifEmpty { listOf(ExportResolution.HD_720) }
 
-    private fun videoCapabilities(): List<MediaCodecInfo.VideoCapabilities> = encoderInfos.mapNotNull { info ->
-        if (!info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true) }) return@mapNotNull null
-        runCatching { info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).videoCapabilities }.getOrNull()
+    /** H.264 codec capabilities, resolved once; encoders that cannot be queried are skipped. */
+    private val avcVideoCapabilities: List<MediaCodecInfo.VideoCapabilities> by lazy {
+        val result = mutableListOf<MediaCodecInfo.VideoCapabilities>()
+        for (info in encoderInfos) {
+            val isAvc: Boolean = info.supportedTypes.any { type: String ->
+                type.equals(MediaFormat.MIMETYPE_VIDEO_AVC, ignoreCase = true)
+            }
+            if (!isAvc) continue
+            val codecCapabilities: MediaCodecInfo.CodecCapabilities? = try {
+                info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            } catch (error: IllegalArgumentException) {
+                ProCutLogger.w(ProCutLogger.TAG_EXPORT, "Cannot query ${info.name} capabilities", error)
+                null
+            }
+            val video: MediaCodecInfo.VideoCapabilities? = codecCapabilities?.videoCapabilities
+            if (video != null) result += video
+        }
+        result
     }
 }

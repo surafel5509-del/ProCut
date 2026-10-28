@@ -50,8 +50,8 @@ data class ExportSettings(
     companion object {
         /** ~0.1 bits per pixel per frame keeps H.264 output visually clean for phone footage. */
         fun automaticBitrate(width: Int, height: Int, fps: Int): Int {
-            val bits = width.toLong() * height.toLong() * fps.toLong() * 0.1
-            return bits.coerceIn(2_000_000L, 45_000_000L).toInt()
+            val bits = width.toDouble() * height.toDouble() * fps.toDouble() * 0.1
+            return bits.coerceIn(2_000_000.0, 45_000_000.0).toInt()
         }
     }
 }

@@ -67,6 +67,8 @@ fun FiltersScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val project = state.project
+    // Local val: the UiState property is a computed getter, which Kotlin cannot smart-cast.
+    val clip = state.selectedClip
 
     Scaffold(containerColor = ProCutBackground) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -80,14 +82,13 @@ fun FiltersScreen(
                     CircularProgressIndicator(color = ProCutPrimary)
                 }
 
-                project == null || state.selectedClip == null -> Text(
+                project == null || clip == null -> Text(
                     text = state.error ?: "Add a clip to the timeline first.",
                     color = ProCutOnSurfaceMuted,
                     modifier = Modifier.padding(24.dp),
                 )
 
                 else -> {
-                    val clip = state.selectedClip
                     Column(
                         modifier = Modifier
                             .fillMaxSize()

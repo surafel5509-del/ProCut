@@ -24,7 +24,7 @@ setting cannot be rendered on a device the UI says so instead of writing a black
 | Overlays | Sticker / logo / image overlays with position, scale, rotation, opacity, rounded corners and animations (image-in-video "picture in picture"; see limitations for video-in-video) |
 | Effects | Fade in/out, transitions (fade to black / white, dip dissolve), speed 0.25×–4× with pitch-correct audio speed |
 | Canvas | 16:9, 9:16, 1:1, 4:5 output and a custom canvas colour behind letterboxed footage |
-| Export | Real Media3 Transformer render, 720p/1080p/4K (device dependent), 24/30/60 fps, configurable bitrate, H.264 + AAC MP4, poster-frame preview of the first clip, progress, cancellation, verification, MediaStore gallery save, share sheet |
+| Export | Real Media3 Transformer render, 720p/1080p/4K (device dependent), 24/30/60 fps, configurable bitrate, H.264 + AAC MP4, poster-frame preview of the first clip, progress, cancellation, verification, gallery save (MediaStore on Android 10+, media-scanner save in `Movies/ProCut Studio` on Android 8–9), share sheet |
 | Undo/redo | Snapshot-based history (depth 80) with human-readable labels |
 
 Ten screens: **Home**, **New project**, **Editor**, **Audio mixer**, **Text editor**,
@@ -41,7 +41,14 @@ when a trim, split, duplicate or move is committed.
 
 * Android Studio **Ladybug (2024.2.1)** or newer
 * **JDK 17**
-* Android SDK **35** (compileSdk/targetSdk 35, minSdk **29**)
+* Android SDK **35** (compileSdk/targetSdk 35)
+* A device or emulator running **Android 8.0 (API 26)** or newer
+
+Android 8.0 and 8.1 are fully supported: imports use the Photo Picker / Storage Access Framework
+(no storage permission), and exports are written to `Movies/ProCut Studio` with the legacy
+`WRITE_EXTERNAL_STORAGE` permission, which is requested only when you tap **Start export** and is
+declared with `maxSdkVersion="28"`. On Android 10+ the same save goes through MediaStore with
+scoped storage and no permission at all.
 * Gradle **8.9** (wrapper included — do not install Gradle manually)
 
 Pinned versions live in `gradle/libs.versions.toml`:
@@ -164,6 +171,44 @@ These are the only places where ProCut 1.0 is deliberately smaller than a deskto
 
 ---
 
+## Continuous integration
+
+`.github/workflows/android.yml` builds and verifies the app on every push and pull request:
+
+1. **Build, test and verify APKs** — provisions JDK 17 and the Android SDK, runs
+   `./gradlew :app:testDebugUnitTest`, assembles the debug and release APKs, and then runs
+   `scripts/verify-apk.sh` against both.
+2. **Install and test on Android 8.0 and Android 14** — boots real emulator images
+   (`android-26` and `android-34`), installs the *verified artifact* from job 1, launches
+   `MainActivity`, fails on any `FATAL EXCEPTION`, then runs the Compose instrumentation tests
+   (`./gradlew :app:connectedDebugAndroidTest`).
+
+`scripts/verify-apk.sh` is the release checklist, not a smoke test. For each APK it asserts:
+
+* package id (`com.procutstudio.editor` / `.debug`), `versionName`/`versionCode`, **minSdk 26**,
+  targetSdk 35 and the launcher activity;
+* `RECORD_AUDIO` is declared, `WRITE_EXTERNAL_STORAGE` is present **and** capped at API 28, and the
+  app declares **no `INTERNET` permission**;
+* the APK is signed (`apksigner verify --print-certs`) and zip-aligned (`zipalign -c -v 4`);
+* `AndroidManifest.xml`, `resources.arsc`, one or more `classes*.dex` and the player layout are
+  actually packaged;
+* for the debug APK, the app's own classes are present in the dex (`MainActivity`,
+  `ProCutApplication`, `EditorViewModel`, `VideoExporter`, `MediaStorePublisher`,
+  `CompositionBuilder`, `TimelineEditor`) — i.e. the code was not stripped by packaging;
+* the release APK is **not** debuggable.
+
+Both APKs are uploaded as the `procut-studio-apks` workflow artifact (30-day retention), and
+screenshots from the emulator runs are kept as `emulator-api-<level>` artifacts. If a build fails,
+`scripts/ci-diagnostics.sh` publishes the Gradle tail as a `ci-diagnostics` check run so the failure
+is readable from the API/UI without the raw log download.
+
+Run the same checks locally:
+
+```bash
+./gradlew :app:assembleDebug
+scripts/verify-apk.sh app/build/outputs/apk/debug/app-debug.apk com.procutstudio.editor.debug
+```
+
 ## Privacy
 
 * Media is selected through the **Photo Picker** (no storage permission) or the system file browser.
@@ -216,6 +261,10 @@ app/
     │   └── res/                             themes, strings, icons, player layout
     ├── test/                                JVM unit + Robolectric integration tests
     └── androidTest/                         Compose instrumentation smoke tests
+.github/workflows/android.yml    CI: build, unit tests, APK verification, emulator runs
+scripts/verify-apk.sh            APK release checklist used by CI and locally
+scripts/ci-build.sh              CI build driver (keeps plain-text logs)
+scripts/ci-diagnostics.sh        publishes build failures as a check run
 gradle/libs.versions.toml        single source of dependency versions
 ```
 

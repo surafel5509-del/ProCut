@@ -188,7 +188,7 @@ data class EditorProject(
                 tracks = emptyList(),
                 assets = assets,
             )
-            return project.withDefaultTracks()
+            return withDefaultTracks(project)
         }
 
         fun withDefaultTracks(project: EditorProject): EditorProject = project.copy(
