@@ -1,5 +1,6 @@
 package com.procutstudio.editor.ui.editor
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,10 +63,13 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.LifecycleEventObserver
 import com.procutstudio.editor.domain.model.MediaType
 import com.procutstudio.editor.domain.model.TextOverlay
+import kotlinx.coroutines.launch
 import com.procutstudio.editor.ui.components.ConfirmDialog
 import com.procutstudio.editor.ui.components.EmptyState
 import com.procutstudio.editor.ui.components.TextPromptDialog
 import com.procutstudio.editor.ui.editor.panels.ClipToolSheet
+import com.procutstudio.editor.ui.editor.tools.CutoutEditorDialog
+import com.procutstudio.editor.ui.editor.tools.ToolPanelHost
 import com.procutstudio.editor.ui.editor.panels.ClipToolTab
 import com.procutstudio.editor.ui.editor.panels.ProjectToolSheet
 import com.procutstudio.editor.ui.theme.ProCutBackground
@@ -74,6 +79,9 @@ import com.procutstudio.editor.ui.theme.ProCutOutline
 import com.procutstudio.editor.ui.theme.ProCutPrimary
 import com.procutstudio.editor.ui.theme.ProCutSurface
 import com.procutstudio.editor.ui.theme.ProCutSurfaceElevated
+
+/** Fixed height of the timeline panel (ruler + lanes); the lanes scroll vertically inside it. */
+private val TIMELINE_PANEL_HEIGHT = 156.dp
 
 /**
  * The editing workspace: preview, transport, multi-track timeline, tool bar and contextual sheets.
@@ -111,6 +119,8 @@ fun EditorScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var cutoutInput by remember { mutableStateOf<EditorViewModel.CutoutInput?>(null) }
+    val scope = rememberCoroutineScope()
 
     val addMediaPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(10),
@@ -140,6 +150,8 @@ fun EditorScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
+    BackHandler(enabled = state.toolPanel != ToolPanel.NONE) { viewModel.closeTool() }
 
     val project = state.project
 
@@ -203,73 +215,103 @@ fun EditorScreen(
                         isMuted = state.isPreviewMuted,
                         onToggleMute = viewModel::togglePreviewMute,
                         showSafeArea = appSettings.showSafeArea,
-                    )
-
-                    TimelineHeader(
-                        pixelsPerSecond = state.pixelsPerSecond,
-                        durationUs = project.durationUs,
-                        onZoomIn = viewModel::zoomIn,
-                        onZoomOut = viewModel::zoomOut,
-                    )
-
-                    TimelineView(
-                        project = project,
-                        playheadUs = state.playheadUs,
                         selectedItemId = state.selectedItemId,
-                        pixelsPerSecond = state.pixelsPerSecond,
-                        isPlaying = state.isPlaying,
-                        onSeek = viewModel::seekTo,
                         onSelectItem = viewModel::selectItem,
-                        onTrimDragStart = viewModel::onTrimDragStart,
-                        onTrimBy = { _, isStart, deltaUs ->
-                            if (isStart) viewModel.trimSelectedStartBy(deltaUs) else viewModel.trimSelectedEndBy(deltaUs)
-                        },
-                        onTrimDragEnd = { tick(); viewModel.onTrimDragEnd() },
-                        onMoveClipToIndex = viewModel::moveClipToIndex,
-                        onMoveItemTo = viewModel::moveItemTo,
-                        onMoveDragEnd = { tick(); viewModel.onMoveDragEnd() },
-                        loadThumbnails = viewModel::loadClipThumbnails,
-                        loadWaveform = viewModel::loadWaveform,
-                        onAddMedia = {
-                            addMediaPicker.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
-                            )
-                        },
-                        modifier = Modifier.height(260.dp),
+                        onOverlayTransform = viewModel::previewOverlayTransform,
+                        onOverlayTransformEnd = viewModel::commitOverlayTransform,
+                        onReplay = viewModel::replayFromStart,
                     )
 
-                    EditorToolbar(
-                        hasSelection = state.selectedItemId != null,
-                        canSplit = state.canSplit,
-                        onSplit = { tick(); viewModel.splitAtPlayhead() },
-                        onDuplicate = { tick(); viewModel.duplicateSelected() },
-                        onDelete = { tick(); showDeleteConfirm = true },
-                        onAddMedia = {
+                    // Panels that edit a clip's look hide the timeline to give the preview room;
+                    // the effect and keyframe panels need it for placing and scrubbing.
+                    val timelineVisible = state.toolPanel == ToolPanel.NONE ||
+                        state.toolPanel == ToolPanel.EFFECTS || state.toolPanel == ToolPanel.KEYFRAME
+                    if (timelineVisible) {
+                        TimelineHeader(
+                            pixelsPerSecond = state.pixelsPerSecond,
+                            durationUs = project.durationUs,
+                            onZoomIn = viewModel::zoomIn,
+                            onZoomOut = viewModel::zoomOut,
+                        )
+
+                        TimelineView(
+                            project = project,
+                            playheadUs = state.playheadUs,
+                            selectedItemId = state.selectedItemId,
+                            pixelsPerSecond = state.pixelsPerSecond,
+                            isPlaying = state.isPlaying,
+                            onSeek = viewModel::seekTo,
+                            onSelectItem = viewModel::selectItem,
+                            onTrimDragStart = viewModel::onTrimDragStart,
+                            onTrimBy = { _, isStart, deltaUs ->
+                                if (isStart) viewModel.trimSelectedStartBy(deltaUs) else viewModel.trimSelectedEndBy(deltaUs)
+                            },
+                            onTrimDragEnd = { tick(); viewModel.onTrimDragEnd() },
+                            onMoveClipToIndex = viewModel::moveClipToIndex,
+                            onMoveItemTo = viewModel::moveItemTo,
+                            onMoveDragEnd = { tick(); viewModel.onMoveDragEnd() },
+                            loadThumbnails = viewModel::loadClipThumbnails,
+                            loadWaveform = viewModel::loadWaveform,
+                            onAddMedia = {
+                                addMediaPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
+                                )
+                            },
+                            modifier = Modifier.height(TIMELINE_PANEL_HEIGHT),
+                        )
+                    }
+
+                    if (state.toolPanel != ToolPanel.NONE) {
+                        ToolPanelHost(
+                            state = state,
+                            viewModel = viewModel,
+                            onImportSticker = {
+                                stickerPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                            modifier = Modifier.navigationBarsPadding(),
+                        )
+                    } else {
+                        val pickMedia = {
                             addMediaPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
                             )
-                        },
-                        onEditClip = { if (state.selectedItemId != null) clipSheetTab = ClipToolTab.TRIM },
-                        onSpeed = { if (state.selectedItemId != null) clipSheetTab = ClipToolTab.SPEED },
-                        onFilters = { if (state.selectedItemId != null) clipSheetTab = ClipToolTab.TRIM },
-                        onText = {
-                            val selectedText = state.selectedItem as? TextOverlay
-                            if (selectedText != null) {
-                                onOpenTextEditor(selectedText.id)
-                            } else {
+                        }
+                        val actions = ToolbarActions(
+                            viewModel = viewModel,
+                            tick = tick,
+                            openClipSheet = { tab -> clipSheetTab = tab },
+                            onAddMedia = pickMedia,
+                            onAddText = {
                                 val newId = viewModel.addTextOverlay("Your text")
                                 onOpenTextEditor(newId)
-                            }
-                        },
-                        onAudio = onOpenAudioMixer,
-                        onCanvas = { showProjectSheet = true },
-                        onSticker = {
-                            stickerPicker.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                            )
-                        },
-                        modifier = Modifier.navigationBarsPadding(),
-                    )
+                            },
+                            onEditText = { id -> onOpenTextEditor(id) },
+                            onAudio = onOpenAudioMixer,
+                            onCanvas = { showProjectSheet = true },
+                            onImportOverlay = {
+                                stickerPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                            onDelete = { showDeleteConfirm = true },
+                            onRemoveBackground = {
+                                scope.launch { cutoutInput = viewModel.loadCutoutInput() }
+                            },
+                            onReplace = {
+                                replacePicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
+                                )
+                            },
+                        )
+                        EditorToolbar(
+                            entries = buildToolbarEntries(state, actions),
+                            showBack = state.selectedItemId != null,
+                            onBack = { viewModel.selectItem(null) },
+                            modifier = Modifier.navigationBarsPadding(),
+                        )
+                    }
                 }
             }
 
@@ -290,7 +332,8 @@ fun EditorScreen(
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            text = state.isBusyMessage ?: "",
+                            text = (state.isBusyMessage ?: "") +
+                                (state.busyProgress?.let { " ${(it * 100).toInt()}%" } ?: ""),
                             style = MaterialTheme.typography.labelMedium,
                             color = ProCutOnSurface,
                         )
@@ -298,6 +341,18 @@ fun EditorScreen(
                 }
             }
         }
+    }
+
+    val pendingCutout = cutoutInput
+    if (pendingCutout != null) {
+        CutoutEditorDialog(
+            input = pendingCutout,
+            onSave = { mask ->
+                viewModel.saveCutout(pendingCutout.clipId, mask)
+                cutoutInput = null
+            },
+            onDismiss = { cutoutInput = null },
+        )
     }
 
     val selectedClip = state.selectedClip

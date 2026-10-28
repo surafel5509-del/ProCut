@@ -16,9 +16,13 @@ setting cannot be rendered on a device the UI says so instead of writing a black
 | --- | --- |
 | Import | Android **Photo Picker** (multi-select) and **Storage Access Framework**; video, photo and audio; files copied into app-private storage with metadata probing (size, rotation, audio track) |
 | Projects | Create, rename, duplicate, reopen, delete; recent-project grid with poster frames; versioned document format with migration hooks |
-| Timeline | Gapless video lane, overlay/text/audio lanes, drag-to-reorder, drag to move, trim handles, split at playhead (video, text, sticker or audio), delete, duplicate, zoom |
+| Timeline | Fixed-height (156 dp) panel with **Video, FX, Overlay, Text and Audio lanes** that scroll inside it; gapless video lane, drag-to-reorder, drag to move, trim handles, split at playhead (video, text, sticker, effect or audio), delete, duplicate, zoom, keyframe diamonds on the clip |
 | Video tools | Crop (free + 1:1 / 16:9 / 9:16 / 4:5 presets), rotate 90°, flip H/V, fit/fill/stretch, zoom/pan, **Ken Burns** motion for photos |
-| Colour | 13 filter presets, brightness, contrast, saturation, warmth, hue, vignette — same numbers in preview and export |
+| Filters & adjust | CapCut-style bottom panel with **Filters / Adjust / Video quality** tabs, category chips (Featured, Pro, Life, Scenery, Movie, Portrait, B&W, Retro, Night), 50+ named looks drawn as thumbnails of *your own frame*, intensity slider, **Apply to all**, and a check button. Adjust has brightness, contrast, saturation, warmth, tint, hue, highlights, shadows, fade, vignette; Video quality has sharpen and film grain. One GL shader renders the grade in the live preview and the export; a CPU mirror (`GradeMath`) draws the thumbnails and photo previews from the same numbers |
+| Effects | **Video-effects lane** with 31 effects in 7 categories (Trending, Pro, Opening & Closing, Nightclub, Lens, …): search bar, "None" card, thumbnail grid. An effect is dropped on the FX lane at the playhead, is trimmed / moved / split like any clip, has an intensity slider and can be spread over the whole video. Rendered by a time-windowed GL shader in preview *and* export (glitch, RGB split, VHS, strobe, fisheye, pixelate, tilt-shift, light leak, snow, …) |
+| Stickers | "Let's explore stickers" panel: category icons, search, **text-art stickers** ("Catch the moment", "Never give up", "Good night", "OMG!", …), emoji packs, vector shapes and badges, plus your own images. Every sticker is rendered to a bitmap by `StickerRenderer` and becomes a normal overlay: drag, pinch and twist it directly on the preview |
+| Pro clip tools | **Keyframes** (position, scale, rotation, opacity with linear / ease / hold easing, interpolated identically in preview and export), **masks** (linear, mirror, circle, rectangle, heart, star — feather, invert, move/rotate), **chroma key** (colour picker, similarity, smoothness, spill), **opacity**, **in / out / combo animations**, **freeze frame**, **reverse** (the trimmed range is really re-encoded backwards), **extract audio**, replace clip, and a **manual background remover** (paint with a brush or erase, or tap *Auto select* to remove every connected area of a similar colour — a colour flood-fill, not an AI model — on the clip's current frame; the mask is saved with the project and applied in preview and export as one static cut-out per clip) |
+| Transport | Play / pause, step, mute and a **Replay** button that jumps back to the start and plays again |
 | Audio | Music / SFX import, waveform rendering from decoded PCM, per-clip volume, mute, trims, fade in/out, voice-over recording with on-demand microphone permission, monitor mute in the transport bar |
 | Text | Rich styles (font, size, weight, italic, underline, caps, colour, background, outline, shadow), alignment, position, scale, 6 presets, 7 animations (fade, slide up/left, scale, pop, typewriter), **SRT subtitle import** (each cue becomes an editable text overlay) |
 | Overlays | Sticker / logo / image overlays with position, scale, rotation, opacity, rounded corners and animations (image-in-video "picture in picture"; see limitations for video-in-video) |
@@ -27,8 +31,12 @@ setting cannot be rendered on a device the UI says so instead of writing a black
 | Export | Real Media3 Transformer render, 720p/1080p/4K (device dependent), 24/30/60 fps, configurable bitrate, H.264 + AAC MP4, poster-frame preview of the first clip, progress, cancellation, verification, gallery save (MediaStore on Android 10+, media-scanner save in `Movies/ProCut Studio` on Android 8–9), share sheet |
 | Undo/redo | Snapshot-based history (depth 80) with human-readable labels |
 
-Ten screens: **Home**, **New project**, **Editor**, **Audio mixer**, **Text editor**,
-**Filters & adjust**, **Export settings**, **Export progress**, **Export success**, **Settings**.
+Nine screens: **Home**, **New project**, **Editor**, **Audio mixer**, **Text editor**,
+**Export settings**, **Export progress**, **Export success**, **Settings**. Filters, adjust,
+effects, stickers and the clip tools are bottom panels inside the **Editor**, as in CapCut.
+
+The small **Pro** badge on some effects, filters and stickers marks the "premium" look from the
+reference design; it is a label only — everything is unlocked, nothing is paywalled.
 
 Editor preferences in **Settings** are wired, not decorative: default export resolution and frame
 rate seed every new project, *keep screen on* sets the window flag while the editor is open,
@@ -100,7 +108,9 @@ com.procutstudio.editor
 │   └── repository/  ProjectRepository (single source of truth)
 ├── media/
 │   ├── playback/    PreviewPlayer (ExoPlayer playlist ⇄ timeline mapping)
-│   ├── render/      TextBitmapRenderer, overlay bitmaps, animation maths (shared by preview + export)
+│   ├── render/      TextBitmapRenderer, overlay bitmaps, animation maths, GradeMath / LookProcessor (CPU mirror of the clip shader)
+│   ├── gl/          GLSL clip shader (grade, mask, chroma key, cut-out) and the timeline FX shader
+│   ├── stickers/    StickerCatalog, StickerRenderer, StickerStore (bitmap cache)
 │   └── export/      CompositionBuilder, effects, audio processors, VideoExporter, MediaStorePublisher
 ├── di/              Hilt modules
 └── ui/              theme, components, navigation, and one package per screen
@@ -118,7 +128,8 @@ com.procutstudio.editor
 ### Project document format
 
 `ProjectSchema.CURRENT_VERSION = 1`. The document is a `EditorProject` serialised with kotlinx
-serialization using a `type` discriminator for timeline items (`clip`, `text`, `overlay`, `audio`).
+serialization using a `type` discriminator for timeline items (`clip`, `text`, `overlay`, `audio`,
+`effect`). Projects saved before the effects lane existed gain an empty FX track on load.
 Decoding ignores unknown keys and falls back to Kotlin defaults for missing ones, so adding fields
 never breaks older projects. Documents written by a *newer* app version are rejected with a clear
 message instead of being silently mangled; `ProjectDocumentCodec.migrate()` is the hook for future
@@ -133,13 +144,17 @@ schema upgrades.
 2. **Composition build** (`CompositionBuilder`):
    * sequence 0 — the video lane. Each clip carries its trim (`ClippingConfiguration`), speed
      (`SpeedChangeEffect` + `SpeedChangingAudioProcessor`), geometry (`ClipGeometryEffect`, a custom
-     `MatrixTransformation` for crop/fit/zoom/rotate/flip), **Ken Burns** (`KenBurnsEffect`), colour
-     grade (`HslAdjustment`, `Brightness`, `Contrast`, `RgbAdjustment`), vignette and fade curtain.
+     `MatrixTransformation` for crop/fit/zoom/rotate/flip that also evaluates keyframes and in/out/combo
+     animations per frame), **Ken Burns** (`KenBurnsEffect`), and `ClipShaderEffect` — one GLSL pass
+     that does the whole look: grade, split-toning, vignette, grain, mask, chroma key, cut-out and
+     opacity.
    * an optional canvas-colour sequence behind letterboxed footage.
    * audio lanes packed greedily into up to four non-overlapping sequences mixed by the compositor,
      each with `GainAudioProcessor` for volume, mute and sample-accurate fades.
    * composition-level effects: one `OverlayEffect` containing every text/sticker overlay, each
-     windowed to its own timeline range and animated by `OverlayAnimationMath`.
+     windowed to its own timeline range and animated by `OverlayAnimationMath`, followed by
+     `TimelineFxEffect`, which applies the effects lane to the composed frame inside each effect's
+     time window.
 3. **Render** — `Transformer` writes to a temp file; progress is polled and mapped to 0–95 %.
 4. **Verify** — the temp file is re-opened with `MediaMetadataRetriever`; duration, resolution and
    presence of a video track are checked against the request. A mismatch is a failure, not a success.

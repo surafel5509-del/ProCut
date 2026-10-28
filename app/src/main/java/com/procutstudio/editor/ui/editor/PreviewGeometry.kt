@@ -18,6 +18,7 @@ data class PreviewGeometry(
     val translationY: Float = 0f,
     val rotationZ: Float = 0f,
     val fitMode: FitMode = FitMode.FIT,
+    val alpha: Float = 1f,
 ) {
     companion object {
         fun from(transform: ClipTransform?): PreviewGeometry {
@@ -32,12 +33,26 @@ data class PreviewGeometry(
             return PreviewGeometry(
                 scaleX = scaleX,
                 scaleY = scaleY,
-                translationX = -(cropCenterX - 0.5f) * scaleX + safe.offsetX,
-                translationY = -(cropCenterY - 0.5f) * scaleY + safe.offsetY,
+                translationX = -(cropCenterX - 0.5f) * scaleX + safe.offsetX * 0.5f,
+                translationY = -(cropCenterY - 0.5f) * scaleY + safe.offsetY * 0.5f,
                 rotationZ = safe.rotationDegrees.toFloat(),
                 fitMode = safe.fit,
             )
         }
+
+        /**
+         * Adds a keyframe / animation [motion] on top of [base]. Offsets use the exporter's
+         * convention (1.0 = half a frame), hence the 0.5 factor into frame fractions.
+         */
+        fun withMotion(base: PreviewGeometry, motion: com.procutstudio.editor.domain.model.MotionState): PreviewGeometry =
+            base.copy(
+                scaleX = base.scaleX * motion.scale,
+                scaleY = base.scaleY * motion.scale,
+                translationX = base.translationX + motion.offsetX * 0.5f,
+                translationY = base.translationY + motion.offsetY * 0.5f,
+                rotationZ = base.rotationZ + motion.rotationDegrees,
+                alpha = base.alpha * motion.opacity.coerceIn(0f, 1f),
+            )
     }
 }
 
@@ -49,5 +64,6 @@ fun Modifier.previewTransform(geometry: PreviewGeometry, frameWidthPx: Float, fr
         translationX = geometry.translationX * frameWidthPx
         translationY = geometry.translationY * frameHeightPx
         rotationZ = geometry.rotationZ
+        alpha = geometry.alpha
         clip = true
     }

@@ -25,8 +25,10 @@ import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Audiotrack
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Movie
@@ -59,6 +61,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.procutstudio.editor.core.util.TimeUtils
 import com.procutstudio.editor.domain.model.AudioClip
+import com.procutstudio.editor.domain.model.EffectItem
 import com.procutstudio.editor.domain.model.EditorProject
 import com.procutstudio.editor.domain.model.ImageOverlay
 import com.procutstudio.editor.domain.model.TextOverlay
@@ -71,17 +74,27 @@ import com.procutstudio.editor.ui.theme.ProCutOutline
 import com.procutstudio.editor.ui.theme.ProCutSurface
 import com.procutstudio.editor.ui.theme.TimelineGridLine
 import com.procutstudio.editor.ui.theme.TrackAudioColor
+import com.procutstudio.editor.ui.theme.TrackEffectColor
 import com.procutstudio.editor.ui.theme.TrackOverlayColor
 import com.procutstudio.editor.ui.theme.TrackTextColor
 import com.procutstudio.editor.ui.theme.TrackVideoColor
 import kotlin.math.roundToInt
 
-private val LABEL_WIDTH = 54.dp
-private val VIDEO_TRACK_HEIGHT = 62.dp
-private val OVERLAY_TRACK_HEIGHT = 40.dp
-private val TEXT_TRACK_HEIGHT = 38.dp
-private val AUDIO_TRACK_HEIGHT = 46.dp
-private val TRACK_GAP = 6.dp
+private val LABEL_WIDTH = 44.dp
+private val RULER_HEIGHT = 20.dp
+private val VIDEO_TRACK_HEIGHT = 52.dp
+private val EFFECT_TRACK_HEIGHT = 28.dp
+private val OVERLAY_TRACK_HEIGHT = 30.dp
+private val TEXT_TRACK_HEIGHT = 28.dp
+private val AUDIO_TRACK_HEIGHT = 34.dp
+private val TRACK_GAP = 3.dp
+
+/** Callbacks of a trim gesture; shared by every lane so floating items can be trimmed too. */
+class TrimCallbacks(
+    val onStart: () -> Unit,
+    val onBy: (String, Boolean, Long) -> Unit,
+    val onEnd: () -> Unit,
+)
 
 /**
  * The multi-track timeline.
@@ -136,9 +149,12 @@ fun TimelineView(
             }
         }
 
+        val trim = remember(onTrimDragStart, onTrimBy, onTrimDragEnd) {
+            TrimCallbacks(onTrimDragStart, onTrimBy, onTrimDragEnd)
+        }
         Column {
             // ---------------------------------------------------------------- ruler
-            Row(modifier = Modifier.fillMaxWidth().height(24.dp)) {
+            Row(modifier = Modifier.fillMaxWidth().height(RULER_HEIGHT)) {
                 Spacer(Modifier.width(LABEL_WIDTH))
                 Box(
                     modifier = Modifier
@@ -147,12 +163,12 @@ fun TimelineView(
                         .clipToBounds()
                         .pointerInput(pixelsPerSecond) {
                             detectTapGestures { offset ->
-                                onSeek((offset.x / pxPerUs).toLong().coerceAtLeast(0L))
+                                onSeek(((offset.x + scrollState.value) / pxPerUs).toLong().coerceAtLeast(0L))
                             }
                         }
                         .pointerInput(pixelsPerSecond) {
                             detectDragGestures { change, _ ->
-                                onSeek((change.position.x / pxPerUs).toLong().coerceAtLeast(0L))
+                                onSeek(((change.position.x + scrollState.value) / pxPerUs).toLong().coerceAtLeast(0L))
                             }
                         },
                 ) {
@@ -165,82 +181,101 @@ fun TimelineView(
                 }
             }
 
-            Row(modifier = Modifier.fillMaxWidth()) {
-                // ------------------------------------------------------------ labels
-                Column(
-                    modifier = Modifier.width(LABEL_WIDTH).background(ProCutSurface),
-                ) {
-                    TrackLabel(Icons.Outlined.Movie, "Video", VIDEO_TRACK_HEIGHT, onClick = onAddMedia)
-                    Spacer(Modifier.height(TRACK_GAP))
-                    TrackLabel(Icons.Outlined.Layers, "Overlay", OVERLAY_TRACK_HEIGHT)
-                    Spacer(Modifier.height(TRACK_GAP))
-                    TrackLabel(Icons.Outlined.TextFields, "Text", TEXT_TRACK_HEIGHT)
-                    Spacer(Modifier.height(TRACK_GAP))
-                    TrackLabel(Icons.Outlined.Audiotrack, "Audio", AUDIO_TRACK_HEIGHT)
-                }
-
-                // ------------------------------------------------------------ lanes
-                Box(modifier = Modifier.weight(1f).clipToBounds()) {
-                    Box(modifier = Modifier.fillMaxWidth().horizontalScroll(scrollState)) {
-                        Column(modifier = Modifier.requiredWidth(contentWidth)) {
-                            VideoLane(
-                                project = project,
-                                selectedItemId = selectedItemId,
-                                pxPerUs = pxPerUs,
-                                height = VIDEO_TRACK_HEIGHT,
-                                onSelect = onSelectItem,
-                                onMoveClipToIndex = onMoveClipToIndex,
-                                onMoveDragEnd = onMoveDragEnd,
-                                loadThumbnails = loadThumbnails,
-                                onTrimDragStart = onTrimDragStart,
-                                onTrimBy = onTrimBy,
-                                onTrimDragEnd = onTrimDragEnd,
-                            )
-                            Spacer(Modifier.height(TRACK_GAP))
-                            OverlayLane(
-                                project = project,
-                                selectedItemId = selectedItemId,
-                                pxPerUs = pxPerUs,
-                                height = OVERLAY_TRACK_HEIGHT,
-                                onSelect = onSelectItem,
-                                onMoveItemTo = onMoveItemTo,
-                                onMoveDragEnd = onMoveDragEnd,
-                            )
-                            Spacer(Modifier.height(TRACK_GAP))
-                            TextLane(
-                                project = project,
-                                selectedItemId = selectedItemId,
-                                pxPerUs = pxPerUs,
-                                height = TEXT_TRACK_HEIGHT,
-                                onSelect = onSelectItem,
-                                onMoveItemTo = onMoveItemTo,
-                                onMoveDragEnd = onMoveDragEnd,
-                            )
-                            Spacer(Modifier.height(TRACK_GAP))
-                            AudioLane(
-                                project = project,
-                                selectedItemId = selectedItemId,
-                                pxPerUs = pxPerUs,
-                                height = AUDIO_TRACK_HEIGHT,
-                                onSelect = onSelectItem,
-                                onMoveItemTo = onMoveItemTo,
-                                onMoveDragEnd = onMoveDragEnd,
-                                loadWaveform = loadWaveform,
-                            )
-                        }
+            // The lane area has a fixed height (set by the caller) and scrolls vertically when the
+            // five lanes do not fit, like every mobile editor.
+            Box(modifier = Modifier.fillMaxWidth().weight(1f, fill = true)) {
+                Row(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    // -------------------------------------------------------- labels
+                    Column(modifier = Modifier.width(LABEL_WIDTH).background(ProCutSurface)) {
+                        TrackLabel(Icons.Outlined.Movie, "Video", VIDEO_TRACK_HEIGHT, onClick = onAddMedia)
+                        Spacer(Modifier.height(TRACK_GAP))
+                        TrackLabel(Icons.Outlined.AutoAwesome, "FX", EFFECT_TRACK_HEIGHT)
+                        Spacer(Modifier.height(TRACK_GAP))
+                        TrackLabel(Icons.Outlined.Layers, "Overlay", OVERLAY_TRACK_HEIGHT)
+                        Spacer(Modifier.height(TRACK_GAP))
+                        TrackLabel(Icons.Outlined.TextFields, "Text", TEXT_TRACK_HEIGHT)
+                        Spacer(Modifier.height(TRACK_GAP))
+                        TrackLabel(Icons.Outlined.Audiotrack, "Audio", AUDIO_TRACK_HEIGHT)
                     }
 
-                    // -------------------------------------------------------- playhead
-                    Canvas(modifier = Modifier.matchParentSize()) {
-                        val x = playheadUs * pxPerUs - scrollState.value
-                        if (x >= 0f && x <= size.width) {
-                            drawLine(
-                                color = PlayheadColor,
-                                start = Offset(x, 0f),
-                                end = Offset(x, size.height),
-                                strokeWidth = 2.dp.toPx(),
-                            )
+                    // -------------------------------------------------------- lanes
+                    Box(modifier = Modifier.weight(1f).clipToBounds()) {
+                        Box(modifier = Modifier.fillMaxWidth().horizontalScroll(scrollState)) {
+                            Column(modifier = Modifier.requiredWidth(contentWidth)) {
+                                VideoLane(
+                                    project = project,
+                                    selectedItemId = selectedItemId,
+                                    pxPerUs = pxPerUs,
+                                    height = VIDEO_TRACK_HEIGHT,
+                                    onSelect = onSelectItem,
+                                    onMoveClipToIndex = onMoveClipToIndex,
+                                    onMoveDragEnd = onMoveDragEnd,
+                                    loadThumbnails = loadThumbnails,
+                                    onTrimDragStart = onTrimDragStart,
+                                    onTrimBy = onTrimBy,
+                                    onTrimDragEnd = onTrimDragEnd,
+                                )
+                                Spacer(Modifier.height(TRACK_GAP))
+                                EffectLane(
+                                    project = project,
+                                    selectedItemId = selectedItemId,
+                                    pxPerUs = pxPerUs,
+                                    height = EFFECT_TRACK_HEIGHT,
+                                    onSelect = onSelectItem,
+                                    onMoveItemTo = onMoveItemTo,
+                                    onMoveDragEnd = onMoveDragEnd,
+                                    trim = trim,
+                                )
+                                Spacer(Modifier.height(TRACK_GAP))
+                                OverlayLane(
+                                    project = project,
+                                    selectedItemId = selectedItemId,
+                                    pxPerUs = pxPerUs,
+                                    height = OVERLAY_TRACK_HEIGHT,
+                                    onSelect = onSelectItem,
+                                    onMoveItemTo = onMoveItemTo,
+                                    onMoveDragEnd = onMoveDragEnd,
+                                    trim = trim,
+                                )
+                                Spacer(Modifier.height(TRACK_GAP))
+                                TextLane(
+                                    project = project,
+                                    selectedItemId = selectedItemId,
+                                    pxPerUs = pxPerUs,
+                                    height = TEXT_TRACK_HEIGHT,
+                                    onSelect = onSelectItem,
+                                    onMoveItemTo = onMoveItemTo,
+                                    onMoveDragEnd = onMoveDragEnd,
+                                    trim = trim,
+                                )
+                                Spacer(Modifier.height(TRACK_GAP))
+                                AudioLane(
+                                    project = project,
+                                    selectedItemId = selectedItemId,
+                                    pxPerUs = pxPerUs,
+                                    height = AUDIO_TRACK_HEIGHT,
+                                    onSelect = onSelectItem,
+                                    onMoveItemTo = onMoveItemTo,
+                                    onMoveDragEnd = onMoveDragEnd,
+                                    loadWaveform = loadWaveform,
+                                    trim = trim,
+                                )
+                            }
                         }
+                    }
+                }
+
+                // ------------------------------------------------------------ playhead
+                // Drawn above the vertically scrolling lanes so the line always spans the panel.
+                Canvas(modifier = Modifier.matchParentSize().padding(start = LABEL_WIDTH)) {
+                    val x = playheadUs * pxPerUs - scrollState.value
+                    if (x >= 0f && x <= size.width) {
+                        drawLine(
+                            color = PlayheadColor,
+                            start = Offset(x, 0f),
+                            end = Offset(x, size.height),
+                            strokeWidth = 2.dp.toPx(),
+                        )
                     }
                 }
             }
@@ -294,9 +329,11 @@ private fun TrackLabel(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(icon, contentDescription = label, tint = ProCutOnSurfaceMuted, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.height(2.dp))
-        Text(label, style = MaterialTheme.typography.labelSmall, color = ProCutOnSurfaceMuted, maxLines = 1)
+        Icon(icon, contentDescription = label, tint = ProCutOnSurfaceMuted, modifier = Modifier.size(if (height >= 40.dp) 16.dp else 14.dp))
+        if (height >= 40.dp) {
+            Spacer(Modifier.height(2.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall, color = ProCutOnSurfaceMuted, maxLines = 1)
+        }
     }
 }
 
@@ -432,6 +469,24 @@ private fun VideoClipBlock(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        if (clip.keyframes.isNotEmpty()) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val r = 3.5.dp.toPx()
+                clip.keyframes.forEach { keyframe ->
+                    val x = (keyframe.timeUs * pxPerUs).coerceIn(r, (size.width - r).coerceAtLeast(r))
+                    val y = size.height - r - 3.dp.toPx()
+                    val path = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(x, y - r)
+                        lineTo(x + r, y)
+                        lineTo(x, y + r)
+                        lineTo(x - r, y)
+                        close()
+                    }
+                    drawPath(path, Color(0xFFFFD54F))
+                    drawPath(path, Color.Black.copy(alpha = 0.6f), style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx()))
+                }
+            }
+        }
         if (selected) {
             ClipEdgeHandle(
                 isStart = true,
@@ -493,6 +548,42 @@ private fun ClipThumbnailStrip(
 }
 
 @Composable
+private fun EffectLane(
+    project: EditorProject,
+    selectedItemId: String?,
+    pxPerUs: Float,
+    height: Dp,
+    onSelect: (String?) -> Unit,
+    onMoveItemTo: (String, Long) -> Unit,
+    onMoveDragEnd: () -> Unit,
+    trim: TrimCallbacks,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(height)
+            .background(ProCutSurface)
+            .pointerInput(Unit) { detectTapGestures { onSelect(null) } },
+    ) {
+        project.effectItems.forEach { effect ->
+            FloatingItemBlock(
+                item = effect,
+                label = effect.label.ifBlank { effect.type.label },
+                icon = Icons.Outlined.AutoAwesome,
+                colour = TrackEffectColor,
+                selected = effect.id == selectedItemId,
+                pxPerUs = pxPerUs,
+                height = height,
+                onSelect = { onSelect(effect.id) },
+                onMoveTo = { startUs -> onMoveItemTo(effect.id, startUs) },
+                onMoveDragEnd = onMoveDragEnd,
+                trim = trim,
+            )
+        }
+    }
+}
+
+@Composable
 private fun OverlayLane(
     project: EditorProject,
     selectedItemId: String?,
@@ -501,6 +592,7 @@ private fun OverlayLane(
     onSelect: (String?) -> Unit,
     onMoveItemTo: (String, Long) -> Unit,
     onMoveDragEnd: () -> Unit,
+    trim: TrimCallbacks,
 ) {
     Box(
         modifier = Modifier
@@ -521,6 +613,7 @@ private fun OverlayLane(
                 onSelect = { onSelect(overlay.id) },
                 onMoveTo = { startUs -> onMoveItemTo(overlay.id, startUs) },
                 onMoveDragEnd = onMoveDragEnd,
+                trim = trim,
             )
         }
     }
@@ -535,6 +628,7 @@ private fun TextLane(
     onSelect: (String?) -> Unit,
     onMoveItemTo: (String, Long) -> Unit,
     onMoveDragEnd: () -> Unit,
+    trim: TrimCallbacks,
 ) {
     Box(
         modifier = Modifier
@@ -555,6 +649,7 @@ private fun TextLane(
                 onSelect = { onSelect(overlay.id) },
                 onMoveTo = { startUs -> onMoveItemTo(overlay.id, startUs) },
                 onMoveDragEnd = onMoveDragEnd,
+                trim = trim,
             )
         }
     }
@@ -570,6 +665,7 @@ private fun AudioLane(
     onMoveItemTo: (String, Long) -> Unit,
     onMoveDragEnd: () -> Unit,
     loadWaveform: suspend (AudioClip) -> FloatArray?,
+    trim: TrimCallbacks,
 ) {
     Box(
         modifier = Modifier
@@ -591,6 +687,7 @@ private fun AudioLane(
                 onSelect = { onSelect(audio.id) },
                 onMoveTo = { startUs -> onMoveItemTo(audio.id, startUs) },
                 onMoveDragEnd = onMoveDragEnd,
+                trim = trim,
                 content = {
                     WaveformCanvas(audio = audio, loadWaveform = loadWaveform)
                 },
@@ -634,6 +731,7 @@ private fun FloatingItemBlock(
     onSelect: () -> Unit,
     onMoveTo: (Long) -> Unit,
     onMoveDragEnd: () -> Unit,
+    trim: TrimCallbacks? = null,
     content: (@Composable () -> Unit)? = null,
 ) {
     val density = LocalDensity.current
@@ -688,6 +786,22 @@ private fun FloatingItemBlock(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        if (selected && trim != null) {
+            ClipEdgeHandle(
+                isStart = true,
+                modifier = Modifier.align(Alignment.CenterStart),
+                onDragStart = trim.onStart,
+                onDelta = { dxPx -> trim.onBy(item.id, true, (dxPx / pxPerUs).toLong()) },
+                onDragEnd = trim.onEnd,
+            )
+            ClipEdgeHandle(
+                isStart = false,
+                modifier = Modifier.align(Alignment.CenterEnd),
+                onDragStart = trim.onStart,
+                onDelta = { dxPx -> trim.onBy(item.id, false, (dxPx / pxPerUs).toLong()) },
+                onDragEnd = trim.onEnd,
+            )
+        }
     }
 }
 
@@ -702,7 +816,7 @@ private fun ClipEdgeHandle(
 ) {
     Box(
         modifier = modifier
-            .width(16.dp)
+            .width(14.dp)
             .fillMaxHeight()
             .background(Color.White.copy(alpha = 0.18f))
             .pointerInput(isStart) {

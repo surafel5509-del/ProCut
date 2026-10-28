@@ -10,6 +10,7 @@ import androidx.media3.common.Effect
 import androidx.media3.common.util.UnstableApi
 import com.procutstudio.editor.core.di.IoDispatcher
 import com.procutstudio.editor.core.util.ProCutLogger
+import com.procutstudio.editor.data.media.ClipMediaTools
 import com.procutstudio.editor.data.media.ImportResult
 import com.procutstudio.editor.data.media.MediaImporter
 import com.procutstudio.editor.data.media.ThumbnailStore
@@ -21,7 +22,18 @@ import com.procutstudio.editor.domain.history.EditHistory
 import com.procutstudio.editor.domain.history.EditorCommands
 import com.procutstudio.editor.domain.model.AspectRatio
 import com.procutstudio.editor.domain.model.AudioClip
+import com.procutstudio.editor.domain.model.AnimationGroup
+import com.procutstudio.editor.domain.model.ChromaKey
+import com.procutstudio.editor.domain.model.ClipAnimationPreset
+import com.procutstudio.editor.domain.model.ClipMask
+import com.procutstudio.editor.domain.model.ClipMotion
 import com.procutstudio.editor.domain.model.ClipTransform
+import com.procutstudio.editor.domain.model.EffectItem
+import com.procutstudio.editor.domain.model.FilterPreset
+import com.procutstudio.editor.domain.model.ImageOverlay
+import com.procutstudio.editor.domain.model.KeyframeEasing
+import com.procutstudio.editor.domain.model.MotionState
+import com.procutstudio.editor.domain.model.VideoFxType
 import com.procutstudio.editor.domain.model.EditorProject
 import com.procutstudio.editor.domain.model.FitMode
 import com.procutstudio.editor.domain.model.OverlayAnimation
@@ -38,6 +50,8 @@ import com.procutstudio.editor.media.gl.ClipShaderEffect
 import com.procutstudio.editor.media.gl.PreviewClock
 import com.procutstudio.editor.media.gl.TimelineFxEffect
 import com.procutstudio.editor.media.playback.PreviewPlayer
+import com.procutstudio.editor.media.stickers.StickerDef
+import com.procutstudio.editor.media.stickers.StickerStore
 import com.procutstudio.editor.media.render.TextBitmapRenderer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -80,6 +94,8 @@ class EditorViewModel @Inject constructor(
     private val thumbnailStore: ThumbnailStore,
     private val waveformStore: WaveformStore,
     private val textRenderer: TextBitmapRenderer,
+    private val clipMediaTools: ClipMediaTools,
+    private val stickerStore: StickerStore,
     settingsRepository: SettingsRepository,
     savedStateHandle: SavedStateHandle,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
@@ -192,6 +208,15 @@ class EditorViewModel @Inject constructor(
             startTicker()
         }
     }
+
+    /** "Play again": jumps to the very start and plays. */
+    fun replayFromStart() {
+        seekTo(0L)
+        togglePlayback()
+    }
+
+    /** Closes a sticker / text drag-pinch-twist gesture as one undo step. */
+    fun commitOverlayTransform() = commitPending(EditorCommands.EDIT_OVERLAY)
 
     fun pause() {
         stopTicker()
@@ -431,7 +456,7 @@ class EditorViewModel @Inject constructor(
     }
 
     fun previewEffects(effects: VideoEffect) {
-        val clip = _uiState.value.selectedClip ?: return
+        val clip = targetClip() ?: return
         mutate(null) { project -> TimelineEditor.setEffects(project, clip.id, effects) }
         applyLiveEffects()
     }
@@ -455,7 +480,7 @@ class EditorViewModel @Inject constructor(
     fun commitTransient(label: String) = commitPending(label)
 
     fun setEffects(effects: VideoEffect) {
-        val clip = _uiState.value.selectedClip ?: return
+        val clip = targetClip() ?: return
         mutate(EditorCommands.ADJUST) { project -> TimelineEditor.setEffects(project, clip.id, effects) }
         applyLiveEffects()
     }
@@ -610,6 +635,332 @@ class EditorViewModel @Inject constructor(
             }
             _uiState.value = _uiState.value.copy(isBusyMessage = null)
         }
+    }
+
+    // ------------------------------------------------------------------ tool panels
+
+    /** The clip a tool acts on: the selected clip, else the clip under the playhead. */
+    private fun targetClip(): TimelineClip? = _uiState.value.selectedClip ?: _uiState.value.clipAtPlayhead
+
+    fun openTool(panel: ToolPanel) {
+        val state = _uiState.value
+        val needsClip = panel != ToolPanel.NONE && panel != ToolPanel.EFFECTS && panel != ToolPanel.STICKERS
+        if (needsClip && targetClip() == null) {
+            notify("Add a clip to the timeline first")
+            return
+        }
+        // Clip tools need a selection so the timeline highlights what is being edited.
+        val clip = if (needsClip) targetClip() else null
+        _uiState.value = state.copy(
+            toolPanel = panel,
+            selectedItemId = if (clip != null && state.selectedClip == null) clip.id else state.selectedItemId,
+        )
+        applyLiveEffects()
+    }
+
+    fun closeTool() {
+        _uiState.value = _uiState.value.copy(toolPanel = ToolPanel.NONE)
+    }
+
+    // ---- filters -------------------------------------------------------------------------
+
+    fun applyFilter(preset: FilterPreset) {
+        val clip = targetClip() ?: return
+        mutate(EditorCommands.FILTER) { project ->
+            TimelineEditor.setEffects(project, clip.id, clip.effects.copy(filter = preset, filterIntensity = 1f))
+        }
+    }
+
+    fun applyEffectsToAll(effects: VideoEffect) {
+        mutate(EditorCommands.FILTER_ALL) { project -> TimelineEditor.applyGradeToAll(project, effects) }
+        notify("Applied to all clips")
+    }
+
+    // ---- effects lane ----------------------------------------------------------------------
+
+    /**
+     * Tapping an effect card: replaces the selected effect item, or drops a new one at the
+     * playhead (selected afterwards so its intensity can be tuned straight away).
+     */
+    fun addVideoEffect(type: VideoFxType) {
+        val state = _uiState.value
+        val selected = state.selectedItem as? EffectItem
+        if (selected != null) {
+            mutate(EditorCommands.EDIT_EFFECT) { project ->
+                TimelineEditor.updateEffect(project, selected.id) { it.copy(type = type, label = type.label) }
+            }
+            return
+        }
+        val before = state.project?.effectItems?.map { it.id }.orEmpty().toSet()
+        mutate(EditorCommands.ADD_EFFECT) { project ->
+            TimelineEditor.addEffect(project, type, state.playheadUs)
+        }
+        val added = _uiState.value.project?.effectItems?.firstOrNull { it.id !in before }
+        if (added != null) {
+            _uiState.value = _uiState.value.copy(selectedItemId = added.id)
+        } else {
+            notify("Add a clip first — effects colour the video")
+        }
+    }
+
+    fun previewEffectIntensity(effectId: String, intensity: Float) {
+        mutate(null) { project -> TimelineEditor.updateEffect(project, effectId) { it.copy(intensity = intensity) } }
+    }
+
+    /** "None" card: removes the effects running at the playhead. */
+    fun removeEffectsAtPlayhead() {
+        val state = _uiState.value
+        val project = state.project ?: return
+        val active = project.effectsAt(state.playheadUs)
+        if (active.isEmpty()) {
+            notify("No effect at the playhead")
+            return
+        }
+        mutate(EditorCommands.DELETE) { current ->
+            active.fold(current) { acc, item -> TimelineEditor.deleteItem(acc, item.id) }
+        }
+        _uiState.value = _uiState.value.copy(selectedItemId = null)
+    }
+
+    fun spreadEffectOverVideo(effectId: String) {
+        mutate(EditorCommands.EDIT_EFFECT) { project -> TimelineEditor.spreadEffectOverProject(project, effectId) }
+    }
+
+    // ---- stickers --------------------------------------------------------------------------
+
+    fun addSticker(def: StickerDef) {
+        viewModelScope.launch {
+            val asset = runCatching { stickerStore.materialize(def) }.getOrElse {
+                notify("This sticker could not be created")
+                return@launch
+            }
+            val start = _uiState.value.playheadUs
+            val before = _uiState.value.project?.imageOverlays?.map { it.id }.orEmpty().toSet()
+            mutate(EditorCommands.ADD_STICKER) { project ->
+                TimelineEditor.addImageOverlay(project, asset, start, scale = def.defaultScale)
+            }
+            _uiState.value.project?.imageOverlays?.firstOrNull { it.id !in before }?.let {
+                _uiState.value = _uiState.value.copy(selectedItemId = it.id)
+            }
+        }
+    }
+
+    suspend fun stickerTile(def: StickerDef): Bitmap = stickerStore.tile(def)
+
+    /** Live drag / pinch / twist of a sticker or text; commit with [commitTransient]. */
+    fun previewOverlayTransform(itemId: String, positionX: Float, positionY: Float, scale: Float, rotationDegrees: Float) {
+        mutate(null) { project ->
+            when (project.item(itemId)) {
+                is ImageOverlay -> TimelineEditor.updateImageOverlay(project, itemId) {
+                    it.copy(positionX = positionX, positionY = positionY, scale = scale, rotationDegrees = rotationDegrees)
+                }
+                is TextOverlay -> TimelineEditor.updateText(project, itemId) {
+                    it.copy(
+                        style = it.style.copy(
+                            positionX = positionX.coerceIn(0f, 1f),
+                            positionY = positionY.coerceIn(0f, 1f),
+                            scale = scale.coerceIn(0.2f, 5f),
+                            rotationDegrees = rotationDegrees,
+                        ),
+                    )
+                }
+                else -> project
+            }
+        }
+    }
+
+    // ---- keyframes -------------------------------------------------------------------------
+
+    /** Motion of the selected clip at the playhead (what the keyframe sliders show). */
+    fun motionAtPlayhead(): MotionState {
+        val clip = targetClip() ?: return MotionState.Identity
+        val local = (_uiState.value.playheadUs - clip.startUs).coerceIn(0L, clip.durationUs)
+        return ClipMotion.keyframeState(clip.keyframes, local)
+    }
+
+    fun toggleKeyframeAtPlayhead() {
+        val clip = targetClip() ?: return
+        val local = (_uiState.value.playheadUs - clip.startUs).coerceIn(0L, clip.durationUs)
+        val existing = clip.keyframes.any { kotlin.math.abs(it.timeUs - local) <= TimelineEditor.KEYFRAME_SNAP_US }
+        if (existing) {
+            mutate(EditorCommands.KEYFRAME) { project -> TimelineEditor.removeKeyframeAt(project, clip.id, local) }
+        } else {
+            val state = if (clip.keyframes.isEmpty()) MotionState.Identity else ClipMotion.keyframeState(clip.keyframes, local)
+            mutate(EditorCommands.KEYFRAME) { project -> TimelineEditor.upsertKeyframe(project, clip.id, local, state) }
+        }
+    }
+
+    /** Slider drag in the keyframe panel: writes the keyframe at the playhead (creating it if needed). */
+    fun previewKeyframeState(state: MotionState) {
+        val clip = targetClip() ?: return
+        val local = (_uiState.value.playheadUs - clip.startUs).coerceIn(0L, clip.durationUs)
+        mutate(null) { project -> TimelineEditor.upsertKeyframe(project, clip.id, local, state) }
+    }
+
+    fun jumpToKeyframe(next: Boolean) {
+        val state = _uiState.value
+        val clip = targetClip() ?: return
+        val local = state.playheadUs - clip.startUs
+        val times = clip.keyframes.map { it.timeUs }.sorted()
+        val target = if (next) times.firstOrNull { it > local + TimelineEditor.KEYFRAME_SNAP_US } else times.lastOrNull { it < local - TimelineEditor.KEYFRAME_SNAP_US }
+        if (target != null) seekTo(clip.startUs + target)
+    }
+
+    fun setKeyframeEasing(easing: KeyframeEasing) {
+        val clip = targetClip() ?: return
+        val local = (_uiState.value.playheadUs - clip.startUs).coerceIn(0L, clip.durationUs)
+        mutate(EditorCommands.KEYFRAME) { project -> TimelineEditor.setKeyframeEasing(project, clip.id, local, easing) }
+    }
+
+    fun clearKeyframes() {
+        val clip = targetClip() ?: return
+        mutate(EditorCommands.KEYFRAME) { project -> TimelineEditor.setKeyframes(project, clip.id, emptyList()) }
+    }
+
+    // ---- mask / chroma / opacity / animations --------------------------------------------
+
+    fun previewMask(mask: ClipMask) {
+        val clip = targetClip() ?: return
+        mutate(null) { project -> TimelineEditor.setMask(project, clip.id, mask) }
+    }
+
+    fun setMask(mask: ClipMask) {
+        val clip = targetClip() ?: return
+        mutate(EditorCommands.MASK) { project -> TimelineEditor.setMask(project, clip.id, mask) }
+    }
+
+    fun previewChroma(key: ChromaKey) {
+        val clip = targetClip() ?: return
+        mutate(null) { project -> TimelineEditor.setChromaKey(project, clip.id, key) }
+    }
+
+    fun setChroma(key: ChromaKey) {
+        val clip = targetClip() ?: return
+        mutate(EditorCommands.CHROMA) { project -> TimelineEditor.setChromaKey(project, clip.id, key) }
+    }
+
+    fun previewOpacity(opacity: Float) {
+        val clip = targetClip() ?: return
+        mutate(null) { project -> TimelineEditor.setOpacity(project, clip.id, opacity) }
+    }
+
+    fun setAnimation(group: AnimationGroup, preset: ClipAnimationPreset?) {
+        val clip = targetClip() ?: return
+        mutate(EditorCommands.ANIMATION) { project -> TimelineEditor.setAnimation(project, clip.id, group, preset) }
+    }
+
+    fun previewAnimationDuration(durationUs: Long) {
+        val clip = targetClip() ?: return
+        mutate(null) { project -> TimelineEditor.setAnimationDuration(project, clip.id, durationUs) }
+    }
+
+    // ---- pro tools: freeze, reverse, extract audio, cut-out ----------------------------
+
+    /** Source time under the playhead for [clip] (respects speed). */
+    private fun sourceTimeAt(clip: TimelineClip, playheadUs: Long): Long {
+        val local = (playheadUs - clip.startUs).coerceIn(0L, clip.durationUs)
+        return (clip.sourceStartUs + (local * clip.speed).toLong()).coerceIn(clip.sourceStartUs, (clip.sourceEndUs - 1L).coerceAtLeast(clip.sourceStartUs))
+    }
+
+    fun freezeFrame() {
+        val state = _uiState.value
+        val project = state.project ?: return
+        val clip = state.selectedClip ?: state.clipAtPlayhead ?: return
+        val asset = project.asset(clip.assetId) ?: return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isBusyMessage = "Freezing frame…")
+            val still = clipMediaTools.createStillAsset(asset, sourceTimeAt(clip, state.playheadUs))
+            if (still == null) {
+                notify("Could not grab that frame")
+            } else {
+                mutate(EditorCommands.FREEZE) { current ->
+                    TimelineEditor.freezeFrame(current, clip.id, state.playheadUs, still)
+                }
+                val freezeClip = _uiState.value.project?.videoClips?.firstOrNull { it.assetId == still.id }
+                if (freezeClip != null) seekTo(freezeClip.startUs + 1L)
+            }
+            _uiState.value = _uiState.value.copy(isBusyMessage = null)
+        }
+    }
+
+    fun reverseSelectedClip() {
+        val state = _uiState.value
+        val project = state.project ?: return
+        val clip = state.selectedClip ?: state.clipAtPlayhead ?: return
+        val asset = project.asset(clip.assetId)
+        if (asset == null || !asset.isVideo) {
+            notify("Only video clips can be reversed")
+            return
+        }
+        viewModelScope.launch {
+            pause()
+            _uiState.value = _uiState.value.copy(isBusyMessage = "Reversing clip…", busyProgress = 0f)
+            val result = clipMediaTools.renderReversed(asset, clip.sourceStartUs, clip.sourceEndUs) { progress ->
+                _uiState.value = _uiState.value.copy(busyProgress = progress)
+            }
+            when (result) {
+                is ClipMediaTools.ReverseResult.Success -> {
+                    mutate(EditorCommands.REVERSE) { current ->
+                        TimelineEditor.applyReversedAsset(current, clip.id, result.asset)
+                    }
+                    notify("Clip reversed (audio is not included)")
+                }
+                is ClipMediaTools.ReverseResult.Failure -> notify(result.message)
+            }
+            _uiState.value = _uiState.value.copy(isBusyMessage = null, busyProgress = null)
+        }
+    }
+
+    fun extractAudioFromSelected() {
+        val clip = targetClip() ?: return
+        val project = _uiState.value.project ?: return
+        val asset = project.asset(clip.assetId)
+        if (asset == null || !asset.isVideo || !asset.hasAudio) {
+            notify("This clip has no audio to extract")
+            return
+        }
+        mutate(EditorCommands.EXTRACT_AUDIO) { current -> TimelineEditor.extractAudio(current, clip.id) }
+        notify("Audio extracted to the audio lane")
+    }
+
+    /** Input for the manual background remover: the current frame and any existing cut-out mask. */
+    data class CutoutInput(val clipId: String, val frame: Bitmap, val existingMask: Bitmap?)
+
+    suspend fun loadCutoutInput(): CutoutInput? {
+        val state = _uiState.value
+        val project = state.project ?: return null
+        val clip = state.selectedClip ?: state.clipAtPlayhead ?: return null
+        val asset = project.asset(clip.assetId) ?: return null
+        _uiState.value = state.copy(isBusyMessage = "Preparing frame…")
+        val frame = clipMediaTools.extractFrame(asset, sourceTimeAt(clip, state.playheadUs), maxDimension = 1280)
+        val existing = clip.cutoutUri?.let { clipMediaTools.loadBitmap(it, 1280) }
+        _uiState.value = _uiState.value.copy(isBusyMessage = null)
+        if (frame == null) {
+            notify("Could not read this frame")
+            return null
+        }
+        return CutoutInput(clip.id, frame, existing)
+    }
+
+    /** Stores the painted alpha mask as the clip's cut-out ([mask] == null removes it). */
+    fun saveCutout(clipId: String, mask: Bitmap?) {
+        viewModelScope.launch {
+            val uri = if (mask == null) null else clipMediaTools.saveCutout(mask, clipId)
+            if (mask != null && uri == null) {
+                notify("Could not save the cut-out")
+                return@launch
+            }
+            mutate(EditorCommands.CUTOUT) { project -> TimelineEditor.setCutout(project, clipId, uri) }
+        }
+    }
+
+    /** Small frame of the clip being graded; the filter cards render their thumbnails from it. */
+    suspend fun loadFilterSource(): Bitmap? {
+        val state = _uiState.value
+        val project = state.project ?: return null
+        val clip = state.selectedClip ?: state.clipAtPlayhead ?: return null
+        val asset = project.asset(clip.assetId) ?: return null
+        return clipMediaTools.extractFrame(asset, sourceTimeAt(clip, state.playheadUs), maxDimension = 200)
     }
 
     fun undo() {

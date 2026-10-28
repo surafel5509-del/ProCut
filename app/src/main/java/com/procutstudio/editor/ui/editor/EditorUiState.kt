@@ -13,6 +13,9 @@ enum class EditorPanel {
     EXPORT_HINT,
 }
 
+/** Dark bottom panel hosting a CapCut-style tool (filters, effects, stickers, keyframes…). */
+enum class ToolPanel { NONE, FILTERS, ADJUST, EFFECTS, STICKERS, KEYFRAME, MASK, CHROMA, ANIMATION, OPACITY }
+
 data class EditorUiState(
     val project: EditorProject? = null,
     val isLoading: Boolean = true,
@@ -31,6 +34,8 @@ data class EditorUiState(
     val isImportingSticker: Boolean = false,
     val isBusyMessage: String? = null,
     val isPreviewMuted: Boolean = false,
+    val toolPanel: ToolPanel = ToolPanel.NONE,
+    val busyProgress: Float? = null,
 ) {
     val durationUs: Long get() = project?.durationUs ?: 0L
 
