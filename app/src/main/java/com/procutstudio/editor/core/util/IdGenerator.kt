@@ -20,4 +20,5 @@ object IdGenerator {
     fun audioId(): String = newId("aud")
     fun overlayId(): String = newId("ovl")
     fun assetId(): String = newId("ast")
+    fun effectId(): String = newId("fxi")
 }

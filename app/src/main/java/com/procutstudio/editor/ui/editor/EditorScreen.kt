@@ -83,7 +83,6 @@ fun EditorScreen(
     onBack: () -> Unit,
     onOpenTextEditor: (String?) -> Unit,
     onOpenAudioMixer: () -> Unit,
-    onOpenFilters: (String?) -> Unit,
     onExport: () -> Unit,
     viewModel: EditorViewModel = hiltViewModel(),
 ) {
@@ -252,10 +251,7 @@ fun EditorScreen(
                         },
                         onEditClip = { if (state.selectedItemId != null) clipSheetTab = ClipToolTab.TRIM },
                         onSpeed = { if (state.selectedItemId != null) clipSheetTab = ClipToolTab.SPEED },
-                        onFilters = {
-                            val clipId = state.selectedClip?.id ?: state.clipAtPlayhead?.id
-                            onOpenFilters(clipId)
-                        },
+                        onFilters = { if (state.selectedItemId != null) clipSheetTab = ClipToolTab.TRIM },
                         onText = {
                             val selectedText = state.selectedItem as? TextOverlay
                             if (selectedText != null) {

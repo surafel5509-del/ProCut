@@ -10,7 +10,6 @@ import com.procutstudio.editor.ui.audio.AudioMixerScreen
 import com.procutstudio.editor.ui.create.NewProjectScreen
 import com.procutstudio.editor.ui.editor.EditorScreen
 import com.procutstudio.editor.ui.export.ExportFlowScreen
-import com.procutstudio.editor.ui.filters.FiltersScreen
 import com.procutstudio.editor.ui.home.HomeScreen
 import com.procutstudio.editor.ui.settings.SettingsScreen
 import com.procutstudio.editor.ui.text.TextEditorScreen
@@ -55,7 +54,6 @@ fun ProCutNavHost() {
                 onBack = { navController.popBackStack() },
                 onOpenTextEditor = { textId -> navController.navigate(Routes.textEditor(projectId, textId)) },
                 onOpenAudioMixer = { navController.navigate(Routes.audioMixer(projectId)) },
-                onOpenFilters = { clipId -> navController.navigate(Routes.filters(projectId, clipId)) },
                 onExport = { navController.navigate(Routes.export(projectId)) },
             )
         }
@@ -79,20 +77,6 @@ fun ProCutNavHost() {
             arguments = listOf(navArgument("projectId") { type = NavType.StringType }),
         ) {
             AudioMixerScreen(onBack = { navController.popBackStack() })
-        }
-
-        composable(
-            route = Routes.FILTERS,
-            arguments = listOf(
-                navArgument("projectId") { type = NavType.StringType },
-                navArgument("clipId") {
-                    type = NavType.StringType
-                    nullable = true
-                    defaultValue = null
-                },
-            ),
-        ) {
-            FiltersScreen(onBack = { navController.popBackStack() })
         }
 
         composable(

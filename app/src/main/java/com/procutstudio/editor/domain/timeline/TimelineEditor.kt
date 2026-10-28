@@ -3,6 +3,14 @@ package com.procutstudio.editor.domain.timeline
 import com.procutstudio.editor.core.util.IdGenerator
 import com.procutstudio.editor.core.util.TimeUtils
 import com.procutstudio.editor.domain.model.AudioClip
+import com.procutstudio.editor.domain.model.ChromaKey
+import com.procutstudio.editor.domain.model.ClipAnimationPreset
+import com.procutstudio.editor.domain.model.ClipMask
+import com.procutstudio.editor.domain.model.ClipMotion
+import com.procutstudio.editor.domain.model.EffectItem
+import com.procutstudio.editor.domain.model.Keyframe
+import com.procutstudio.editor.domain.model.KeyframeEasing
+import com.procutstudio.editor.domain.model.VideoFxType
 import com.procutstudio.editor.domain.model.ClipTransform
 import com.procutstudio.editor.domain.model.EditorProject
 import com.procutstudio.editor.domain.model.ExportSettings
@@ -74,11 +82,14 @@ object TimelineEditor {
         val halves: Pair<TimelineItem, TimelineItem> = when (item) {
             is TimelineClip -> {
                 val sourceSplit = item.sourceStartUs + (offset * item.speed).roundToLong()
+                val (leftKeyframes, rightKeyframes) = splitKeyframes(item.keyframes, offset)
                 val left = item.copy(
                     durationUs = offset,
                     sourceEndUs = sourceSplit,
                     fadeOutUs = 0L,
                     label = item.label,
+                    keyframes = leftKeyframes,
+                    animationOut = null,
                 )
                 val right = item.copy(
                     id = IdGenerator.clipId(),
@@ -87,6 +98,8 @@ object TimelineEditor {
                     sourceStartUs = sourceSplit,
                     fadeInUs = 0L,
                     transition = TransitionConfig(),
+                    keyframes = rightKeyframes,
+                    animationIn = null,
                 )
                 left to right
             }
@@ -114,6 +127,12 @@ object TimelineEditor {
                 val right = item.copy(id = IdGenerator.overlayId(), startUs = atUs, durationUs = item.durationUs - offset)
                 left to right
             }
+
+            is EffectItem -> {
+                val left = item.copy(durationUs = offset)
+                val right = item.copy(id = IdGenerator.effectId(), startUs = atUs, durationUs = item.durationUs - offset)
+                left to right
+            }
         }
         val updated = track.items.map { if (it.id == itemId) halves.first else it } + halves.second
         val placed = project.withTrackItems(track.id, updated.sortedBy { it.startUs })
@@ -135,6 +154,7 @@ object TimelineEditor {
             is AudioClip -> item.copy(id = IdGenerator.audioId())
             is TextOverlay -> item.copy(id = IdGenerator.textId())
             is ImageOverlay -> item.copy(id = IdGenerator.overlayId())
+            is EffectItem -> item.copy(id = IdGenerator.effectId())
         }
         val insertAt = if (track.type == TrackType.VIDEO) {
             val index = track.sortedItems.indexOfFirst { it.id == itemId }
@@ -223,6 +243,11 @@ object TimelineEditor {
                 val delta = deltaUs.coerceIn(-item.startUs, item.durationUs - TimeUtils.MIN_CLIP_DURATION_US)
                 item.copy(startUs = item.startUs + delta, durationUs = item.durationUs - delta)
             }
+
+            is EffectItem -> {
+                val delta = deltaUs.coerceIn(-item.startUs, item.durationUs - TimeUtils.MIN_CLIP_DURATION_US)
+                item.copy(startUs = item.startUs + delta, durationUs = item.durationUs - delta)
+            }
         }
         val placed = project.withTrackItems(
             track.id,
@@ -252,6 +277,10 @@ object TimelineEditor {
             is ImageOverlay -> item.copy(
                 durationUs = (item.durationUs - deltaUs).coerceAtLeast(TimeUtils.MIN_CLIP_DURATION_US),
             )
+
+            is EffectItem -> item.copy(
+                durationUs = (item.durationUs - deltaUs).coerceAtLeast(TimeUtils.MIN_CLIP_DURATION_US),
+            )
         }
         val placed = project.withTrackItems(
             track.id,
@@ -273,6 +302,7 @@ object TimelineEditor {
             is AudioClip -> item.copy(durationUs = target)
             is TextOverlay -> item.copy(durationUs = target)
             is ImageOverlay -> item.copy(durationUs = target)
+            is EffectItem -> item.copy(durationUs = target)
         }
         val placed = project.withTrackItems(track.id, track.items.map { if (it.id == itemId) updated else it })
         return if (track.type == TrackType.VIDEO) placed.reflowVideoTrack() else placed
@@ -456,6 +486,237 @@ object TimelineEditor {
     fun setCanvasColor(project: EditorProject, argb: Long): EditorProject =
         project.copy(canvasColorArgb = argb)
 
+    // ------------------------------------------------------------------ effects lane
+
+    /**
+     * Drops an effect on the effects lane at [startUs]. The item is clamped so it never starts
+     * past the end of the project and never runs beyond it (unless the project is shorter than the
+     * minimum effect length).
+     */
+    fun addEffect(
+        project: EditorProject,
+        type: VideoFxType,
+        startUs: Long,
+        durationUs: Long = FX_DEFAULT_DURATION_US,
+        intensity: Float = 0.7f,
+    ): EditorProject {
+        val total = project.durationUs
+        val start = if (total > 0L) startUs.coerceIn(0L, (total - TimeUtils.MIN_CLIP_DURATION_US).coerceAtLeast(0L)) else 0L
+        val room = if (total > 0L) total - start else durationUs
+        val length = durationUs.coerceAtMost(room).coerceAtLeast(TimeUtils.MIN_CLIP_DURATION_US)
+        val item = EffectItem(
+            id = IdGenerator.effectId(),
+            startUs = start,
+            durationUs = length,
+            type = type,
+            intensity = intensity,
+            label = type.label,
+        )
+        return project.addItems(TrackType.EFFECT, listOf(item))
+    }
+
+    fun updateEffect(project: EditorProject, effectId: String, change: (EffectItem) -> EffectItem): EditorProject {
+        val track = project.trackOf(effectId) ?: return project
+        val item = track.item(effectId) as? EffectItem ?: return project
+        val updated = change(item).sanitized()
+        return project.withTrackItems(
+            track.id,
+            track.items.map { if (it.id == effectId) updated else it }.sortedBy { it.startUs },
+        )
+    }
+
+    /** Stretches an effect over the entire video. */
+    fun spreadEffectOverProject(project: EditorProject, effectId: String): EditorProject =
+        updateEffect(project, effectId) { it.copy(startUs = 0L, durationUs = project.durationUs.coerceAtLeast(TimeUtils.MIN_CLIP_DURATION_US)) }
+
+    // ------------------------------------------------------------------ clip tools
+
+    fun setMask(project: EditorProject, clipId: String, mask: ClipMask): EditorProject =
+        updateClip(project, clipId) { it.copy(mask = mask) }
+
+    fun setChromaKey(project: EditorProject, clipId: String, key: ChromaKey): EditorProject =
+        updateClip(project, clipId) { it.copy(chromaKey = key) }
+
+    fun setOpacity(project: EditorProject, clipId: String, opacity: Float): EditorProject =
+        updateClip(project, clipId) { it.copy(opacity = opacity) }
+
+    fun setCutout(project: EditorProject, clipId: String, uri: String?): EditorProject =
+        updateClip(project, clipId) { it.copy(cutoutUri = uri) }
+
+    fun setKeyframes(project: EditorProject, clipId: String, keyframes: List<Keyframe>): EditorProject =
+        updateClip(project, clipId) { it.copy(keyframes = keyframes) }
+
+    /**
+     * Adds or replaces the keyframe at [localTimeUs] (clip-relative). Keyframes closer than
+     * [KEYFRAME_SNAP_US] to an existing one overwrite it, so tapping the diamond twice on the same
+     * frame never stacks duplicates.
+     */
+    fun upsertKeyframe(project: EditorProject, clipId: String, localTimeUs: Long, state: com.procutstudio.editor.domain.model.MotionState, easing: KeyframeEasing? = null): EditorProject =
+        updateClip(project, clipId) { clip ->
+            val time = localTimeUs.coerceIn(0L, clip.durationUs)
+            val existing = clip.keyframes.firstOrNull { kotlin.math.abs(it.timeUs - time) <= KEYFRAME_SNAP_US }
+            val keyframe = Keyframe(
+                timeUs = existing?.timeUs ?: time,
+                scale = state.scale,
+                offsetX = state.offsetX,
+                offsetY = state.offsetY,
+                rotationDegrees = state.rotationDegrees,
+                opacity = state.opacity,
+                easing = easing ?: existing?.easing ?: KeyframeEasing.EASE_IN_OUT,
+            )
+            clip.copy(keyframes = (clip.keyframes.filter { it !== existing } + keyframe).sortedBy { it.timeUs })
+        }
+
+    fun removeKeyframeAt(project: EditorProject, clipId: String, localTimeUs: Long): EditorProject =
+        updateClip(project, clipId) { clip ->
+            val target = clip.keyframes.firstOrNull { kotlin.math.abs(it.timeUs - localTimeUs) <= KEYFRAME_SNAP_US }
+            if (target == null) clip else clip.copy(keyframes = clip.keyframes.filter { it !== target })
+        }
+
+    fun setKeyframeEasing(project: EditorProject, clipId: String, localTimeUs: Long, easing: KeyframeEasing): EditorProject =
+        updateClip(project, clipId) { clip ->
+            clip.copy(
+                keyframes = clip.keyframes.map {
+                    if (kotlin.math.abs(it.timeUs - localTimeUs) <= KEYFRAME_SNAP_US) it.copy(easing = easing) else it
+                },
+            )
+        }
+
+    /** Sets (or clears, with null) the in / out / combo animation of a clip. */
+    fun setAnimation(
+        project: EditorProject,
+        clipId: String,
+        group: com.procutstudio.editor.domain.model.AnimationGroup,
+        preset: ClipAnimationPreset?,
+    ): EditorProject = updateClip(project, clipId) { clip ->
+        when (group) {
+            com.procutstudio.editor.domain.model.AnimationGroup.IN -> clip.copy(animationIn = preset)
+            com.procutstudio.editor.domain.model.AnimationGroup.OUT -> clip.copy(animationOut = preset)
+            com.procutstudio.editor.domain.model.AnimationGroup.COMBO -> clip.copy(animationCombo = preset)
+        }
+    }
+
+    fun setAnimationDuration(project: EditorProject, clipId: String, durationUs: Long): EditorProject =
+        updateClip(project, clipId) { it.copy(animationDurationUs = durationUs) }
+
+    /**
+     * Swaps a clip's footage for a rendered reversed copy. The reversed file only contains the
+     * clip's trimmed range, so the source window becomes the whole file.
+     */
+    fun applyReversedAsset(project: EditorProject, clipId: String, reversed: MediaAsset): EditorProject {
+        val updated = updateClip(project, clipId) { clip ->
+            clip.copy(assetId = reversed.id, isReversed = !clip.isReversed, keyframes = clip.keyframes)
+                .withSourceRange(0L, reversed.durationUs.coerceAtLeast(TimeUtils.MIN_CLIP_DURATION_US))
+        }
+        return updated.withAssets(listOf(reversed))
+    }
+
+    /**
+     * CapCut-style freeze frame: the clip is split at [atUs] and a still of that frame, shown for
+     * [durationUs], is inserted between the halves. [frameAsset] is the already-extracted picture.
+     */
+    fun freezeFrame(
+        project: EditorProject,
+        clipId: String,
+        atUs: Long,
+        frameAsset: MediaAsset,
+        durationUs: Long = FREEZE_DEFAULT_DURATION_US,
+    ): EditorProject {
+        val trackId = project.videoTrack?.id ?: return project
+        val clip = project.videoClips.firstOrNull { it.id == clipId } ?: return project
+        val offset = (atUs - clip.startUs).coerceIn(0L, clip.durationUs)
+        val length = durationUs.coerceAtLeast(TimeUtils.MIN_CLIP_DURATION_US)
+        val freeze = clip.copy(
+            id = IdGenerator.clipId(),
+            assetId = frameAsset.id,
+            mediaType = MediaType.IMAGE,
+            sourceStartUs = 0L,
+            sourceEndUs = length,
+            durationUs = length,
+            speed = 1f,
+            isMuted = true,
+            fadeInUs = 0L,
+            fadeOutUs = 0L,
+            transition = TransitionConfig(),
+            keyframes = emptyList(),
+            animationIn = null,
+            animationOut = null,
+            animationCombo = null,
+            cutoutUri = clip.cutoutUri,
+            isReversed = false,
+            transform = clip.transform.copy(kenBurns = com.procutstudio.editor.domain.model.KenBurnsMotion.NONE),
+            label = "Freeze frame",
+        )
+        val split = splitItem(project, clipId, clip.startUs + offset)
+        val lane = split.videoClips
+        val leftIndex = lane.indexOfFirst { it.id == clipId }
+        if (leftIndex < 0) return project
+        val insertIndex = if (split !== project) {
+            leftIndex + 1
+        } else if (offset < clip.durationUs / 2) {
+            leftIndex
+        } else {
+            leftIndex + 1
+        }
+        val newLane = lane.toMutableList().apply { add(insertIndex, freeze) }
+        return split.withAssets(listOf(frameAsset)).withTrackItems(trackId, newLane).reflowVideoTrack()
+    }
+
+    /**
+     * Copies a video clip's sound onto the audio lane (at the clip's position) and mutes the clip,
+     * which is how "Extract audio" works in mobile editors.
+     */
+    fun extractAudio(project: EditorProject, clipId: String): EditorProject {
+        val clip = project.videoClips.firstOrNull { it.id == clipId } ?: return project
+        val asset = project.asset(clip.assetId) ?: return project
+        if (!asset.isVideo || !asset.hasAudio) return project
+        val audio = AudioClip(
+            id = IdGenerator.audioId(),
+            startUs = clip.startUs,
+            durationUs = clip.sourceDurationUs.coerceAtLeast(TimeUtils.MIN_CLIP_DURATION_US),
+            assetId = asset.id,
+            sourceStartUs = clip.sourceStartUs,
+            volume = clip.volume.coerceIn(0f, 2f),
+            fadeInUs = 0L,
+            fadeOutUs = 0L,
+            label = "Audio · ${clip.label.ifBlank { asset.displayName }}".take(40),
+        )
+        return setMuted(project.addItems(TrackType.AUDIO, listOf(audio)), clipId, true)
+    }
+
+    /** Copies one grade onto every clip of the main lane ("Apply to all"). */
+    fun applyGradeToAll(project: EditorProject, effects: VideoEffect): EditorProject =
+        project.videoClips.fold(project) { acc, clip -> setEffects(acc, clip.id, effects) }
+
+    private fun splitKeyframes(keyframes: List<Keyframe>, offsetUs: Long): Pair<List<Keyframe>, List<Keyframe>> {
+        if (keyframes.isEmpty()) return emptyList<Keyframe>() to emptyList()
+        val boundary = ClipMotion.keyframeState(keyframes, offsetUs)
+        val sorted = keyframes.sortedBy { it.timeUs }
+        val left = sorted.filter { it.timeUs < offsetUs } + Keyframe(
+            timeUs = offsetUs,
+            scale = boundary.scale,
+            offsetX = boundary.offsetX,
+            offsetY = boundary.offsetY,
+            rotationDegrees = boundary.rotationDegrees,
+            opacity = boundary.opacity,
+        )
+        val right = listOf(
+            Keyframe(
+                timeUs = 0L,
+                scale = boundary.scale,
+                offsetX = boundary.offsetX,
+                offsetY = boundary.offsetY,
+                rotationDegrees = boundary.rotationDegrees,
+                opacity = boundary.opacity,
+            ),
+        ) + sorted.filter { it.timeUs > offsetUs }.map { it.copy(timeUs = it.timeUs - offsetUs) }
+        return left to right
+    }
+
+    const val KEYFRAME_SNAP_US = 60_000L
+    val FX_DEFAULT_DURATION_US = 3 * TimeUtils.MICROS_PER_SECOND
+    val FREEZE_DEFAULT_DURATION_US = 2 * TimeUtils.MICROS_PER_SECOND
+
     val IMAGE_DEFAULT_DURATION_US = 3 * TimeUtils.MICROS_PER_SECOND
     val TEXT_DEFAULT_DURATION_US = 3 * TimeUtils.MICROS_PER_SECOND
     val OVERLAY_DEFAULT_DURATION_US = 3 * TimeUtils.MICROS_PER_SECOND
@@ -465,6 +726,7 @@ object TimelineEditor {
         is TextOverlay -> copy(startUs = newStartUs)
         is ImageOverlay -> copy(startUs = newStartUs)
         is AudioClip -> copy(startUs = newStartUs)
+        is EffectItem -> copy(startUs = newStartUs)
     }
 
     private fun TimelineItem.shiftedBy(deltaUs: Long): TimelineItem = when (this) {
@@ -472,6 +734,7 @@ object TimelineEditor {
         is TextOverlay -> copy(startUs = startUs + deltaUs)
         is ImageOverlay -> copy(startUs = startUs + deltaUs)
         is AudioClip -> copy(startUs = startUs + deltaUs)
+        is EffectItem -> copy(startUs = startUs + deltaUs)
     }
 
     /** True when the item is a video clip that can be split at [us]. */

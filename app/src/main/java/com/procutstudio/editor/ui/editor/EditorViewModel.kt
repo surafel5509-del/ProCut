@@ -6,6 +6,8 @@ import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.Effect
+import androidx.media3.common.util.UnstableApi
 import com.procutstudio.editor.core.di.IoDispatcher
 import com.procutstudio.editor.core.util.ProCutLogger
 import com.procutstudio.editor.data.media.ImportResult
@@ -32,7 +34,9 @@ import com.procutstudio.editor.domain.model.TransitionType
 import com.procutstudio.editor.domain.model.VideoEffect
 import com.procutstudio.editor.domain.subtitles.SrtParser
 import com.procutstudio.editor.domain.timeline.TimelineEditor
-import com.procutstudio.editor.media.export.ColorEffectMapper
+import com.procutstudio.editor.media.gl.ClipShaderEffect
+import com.procutstudio.editor.media.gl.PreviewClock
+import com.procutstudio.editor.media.gl.TimelineFxEffect
 import com.procutstudio.editor.media.playback.PreviewPlayer
 import com.procutstudio.editor.media.render.TextBitmapRenderer
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -159,6 +163,7 @@ class EditorViewModel @Inject constructor(
         val clamped = us.coerceIn(0L, project.durationUs)
         stopTicker()
         _uiState.value = state.copy(playheadUs = clamped, isPlaying = false)
+        PreviewClock.timelineUs = clamped
         // Photos and gaps have no player surface; seeking the player is best-effort there.
         player.seekToTimeline(clamped)
         player.pause()
@@ -227,8 +232,11 @@ class EditorViewModel @Inject constructor(
                     break
                 }
                 _uiState.value = _uiState.value.copy(playheadUs = newPlayhead)
+                PreviewClock.timelineUs = newPlayhead
                 if (clip != null && newPlayhead >= clip.endUs) {
                     player.seekToTimeline(newPlayhead)
+                    // The next clip brings its own look; swap the live shader chain.
+                    applyLiveEffects()
                 }
                 delay(TICK_MS)
             }
@@ -711,12 +719,40 @@ class EditorViewModel @Inject constructor(
         applyLiveEffects()
     }
 
-    /** Colour grade + speed preview for the clip under the playhead. */
+    /**
+     * Live GL preview of the clip look (grade, mask, key, cut-out) for the clip under the playhead
+     * plus the effects lane. Rebuilt only when something it depends on actually changed, because
+     * every `setVideoEffects` call re-initialises the player's GL pipeline.
+     */
+    @OptIn(UnstableApi::class)
     private fun applyLiveEffects() {
-        val clip = _uiState.value.project?.clipAt(_uiState.value.playheadUs) ?: return
+        val project = _uiState.value.project ?: return
+        val playhead = _uiState.value.playheadUs
+        PreviewClock.timelineUs = playhead
+        val clip = project.clipAt(playhead) ?: return
         if (clip.mediaType != com.procutstudio.editor.domain.model.MediaType.VIDEO) return
-        player.setVideoEffects(ColorEffectMapper.videoEffects(clip.effects))
+        val fxItems = project.effectItems
+        val key = listOf(
+            clip.id, clip.effects, clip.mask, clip.chromaKey, clip.cutoutUri, project.canvasColorArgb, fxItems,
+        )
+        if (key == lastEffectsKey) return
+        lastEffectsKey = key
+        val effects = mutableListOf<Effect>()
+        if (clip.needsLookShader) {
+            effects += ClipShaderEffect(
+                clip = clip,
+                canvasArgb = project.canvasColorArgb,
+                clipStartUs = clip.startUs,
+                includeMotionOpacity = false,
+            )
+        }
+        if (fxItems.isNotEmpty()) {
+            effects += TimelineFxEffect(fxItems) { PreviewClock.timelineUs }
+        }
+        player.setVideoEffects(effects)
     }
+
+    private var lastEffectsKey: List<Any?>? = null
 
     private fun notify(message: String) {
         viewModelScope.launch { messageChannel.send(message) }

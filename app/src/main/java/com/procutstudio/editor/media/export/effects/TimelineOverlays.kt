@@ -182,6 +182,8 @@ class CurtainOverlay(
     private val tailUs: Long,
     private val outputWidth: Int,
     private val outputHeight: Int,
+    /** Effect timestamps include the sequence offset; subtract the clip's timeline start. */
+    private val clipStartUs: Long = 0L,
 ) : BitmapOverlay() {
 
     override fun getBitmap(presentationTimeUs: Long): Bitmap = bits
@@ -192,12 +194,13 @@ class CurtainOverlay(
     private fun coverScaleY(): Float = outputHeight.toFloat() / bits.height.coerceAtLeast(1)
 
     override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
+        val localUs = (presentationTimeUs - clipStartUs).coerceAtLeast(0L)
         var alpha = 0f
-        if (headUs > 0L && presentationTimeUs < headUs) {
-            alpha = 1f - (presentationTimeUs.toFloat() / headUs).coerceIn(0f, 1f)
+        if (headUs > 0L && localUs < headUs) {
+            alpha = 1f - (localUs.toFloat() / headUs).coerceIn(0f, 1f)
         }
         if (tailUs > 0L) {
-            val remaining = clipDurationUs - presentationTimeUs
+            val remaining = clipDurationUs - localUs
             if (remaining < tailUs) {
                 alpha = maxOf(alpha, 1f - (remaining.toFloat() / tailUs).coerceIn(0f, 1f))
             }

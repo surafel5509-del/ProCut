@@ -21,6 +21,8 @@ class KenBurnsEffect(
     private val startZoom: Float = 1.0f,
     private val endZoom: Float = 1.14f,
     private val panFraction: Float = 0.05f,
+    /** Effect timestamps include the sequence offset; subtract the clip's timeline start. */
+    private val clipStartUs: Long = 0L,
 ) : MatrixTransformation {
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size = Size(inputWidth, inputHeight)
@@ -29,7 +31,7 @@ class KenBurnsEffect(
         val matrix = Matrix()
         if (motion == KenBurnsMotion.NONE) return matrix
         val progress = if (durationUs <= 0L) 0f
-        else (presentationTimeUs.toFloat() / durationUs.toFloat()).coerceIn(0f, 1f)
+        else ((presentationTimeUs - clipStartUs).coerceAtLeast(0L).toFloat() / durationUs.toFloat()).coerceIn(0f, 1f)
 
         when (motion) {
             KenBurnsMotion.ZOOM_IN -> matrix.postScale(lerp(startZoom, endZoom, progress), lerp(startZoom, endZoom, progress))

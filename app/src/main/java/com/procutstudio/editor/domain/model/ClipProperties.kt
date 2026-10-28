@@ -76,10 +76,11 @@ data class ClipTransform(
 
 /**
  * Colour grade of a clip: a preset plus manual adjustments. Manual values are offsets on top of
- * the preset so users can start from a look and fine tune it.
+ * the preset so users can start from a look and fine tune it; [filterIntensity] scales the preset
+ * part only (the intensity slider of the filter browser).
  *
- * Values are in the same units the UI shows (-100..100), which the export pipeline maps onto
- * Media3's `HslAdjustment` (-100..100), `Contrast`/`Brightness` (-1..1) and `RgbAdjustment`.
+ * Values are in the units the UI shows (-100..100). The grading maths lives in `GradeMath`
+ * (CPU, thumbnails / photo preview) and the clip GL shader (preview + export).
  */
 @Serializable
 data class VideoEffect(
@@ -90,30 +91,54 @@ data class VideoEffect(
     val warmth: Float = 0f,
     val hueDegrees: Float = 0f,
     val vignette: Float = 0f,
+    val filterIntensity: Float = 1f,
+    val tint: Float = 0f,
+    val highlights: Float = 0f,
+    val shadows: Float = 0f,
+    val fade: Float = 0f,
+    val sharpen: Float = 0f,
+    val grain: Float = 0f,
 ) {
     val hasManualAdjustments: Boolean
         get() = brightness != 0f || contrast != 0f || saturation != 0f ||
-            warmth != 0f || hueDegrees != 0f || vignette != 0f
+            warmth != 0f || hueDegrees != 0f || vignette != 0f || tint != 0f ||
+            highlights != 0f || shadows != 0f || fade != 0f || sharpen != 0f || grain != 0f
 
-    val isNeutral: Boolean get() = filter == FilterPreset.NONE && !hasManualAdjustments
+    val isNeutral: Boolean get() = (filter == FilterPreset.NONE || filterIntensity <= 0f) && !hasManualAdjustments
+
+    private val presetMix: Float get() = filterIntensity.coerceIn(0f, 1f)
 
     val effectiveSaturation: Float
-        get() = (saturation + filter.saturation).coerceIn(-100f, 100f)
+        get() = (saturation + filter.saturation * presetMix).coerceIn(-100f, 100f)
 
     val effectiveContrast: Float
-        get() = (contrast + filter.contrast).coerceIn(-100f, 100f)
+        get() = (contrast + filter.contrast * presetMix).coerceIn(-100f, 100f)
 
     val effectiveBrightness: Float
-        get() = (brightness + filter.brightness).coerceIn(-100f, 100f)
+        get() = (brightness + filter.brightness * presetMix).coerceIn(-100f, 100f)
 
     val effectiveWarmth: Float
-        get() = (warmth + filter.warmth).coerceIn(-100f, 100f)
+        get() = (warmth + filter.warmth * presetMix).coerceIn(-100f, 100f)
 
     val effectiveHue: Float
-        get() = (hueDegrees + filter.hueDegrees).coerceIn(-180f, 180f)
+        get() = (hueDegrees + filter.hueDegrees * presetMix).coerceIn(-180f, 180f)
 
     val effectiveVignette: Float
-        get() = (vignette + filter.vignette).coerceIn(0f, 1f)
+        get() = (vignette + filter.vignette * presetMix).coerceIn(0f, 1f)
+
+    val effectiveTint: Float
+        get() = (tint + filter.tint * presetMix).coerceIn(-100f, 100f)
+
+    /** 0..1 */
+    val effectiveFade: Float
+        get() = ((fade + filter.fade * presetMix) / 100f).coerceIn(0f, 1f)
+
+    /** 0..1 */
+    val effectiveGrain: Float
+        get() = (grain + filter.grain * presetMix).coerceIn(0f, 1f)
+
+    /** 0..1 */
+    val effectiveSharpen: Float get() = sharpen.coerceIn(0f, 1f)
 
     companion object {
         val Neutral = VideoEffect()

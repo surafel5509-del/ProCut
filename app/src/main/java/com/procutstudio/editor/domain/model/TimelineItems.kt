@@ -39,7 +39,29 @@ data class TimelineClip(
     val fadeOutUs: Long = 0L,
     val transition: TransitionConfig = TransitionConfig(),
     val label: String = "",
+    /** Static clip opacity (1 = opaque). Transparent areas show the canvas colour. */
+    val opacity: Float = 1f,
+    val keyframes: List<Keyframe> = emptyList(),
+    val animationIn: ClipAnimationPreset? = null,
+    val animationOut: ClipAnimationPreset? = null,
+    val animationCombo: ClipAnimationPreset? = null,
+    val animationDurationUs: Long = ClipMotion.DEFAULT_ANIMATION_US,
+    val mask: ClipMask = ClipMask(),
+    val chromaKey: ChromaKey = ChromaKey(),
+    /** App-private PNG whose alpha channel is the manually painted background cut-out. */
+    val cutoutUri: String? = null,
+    /** True when [assetId] points at a rendered reversed copy of the original footage. */
+    val isReversed: Boolean = false,
 ) : TimelineItem {
+
+    /** True when the clip needs the custom GL shader (grade, mask, key or cut-out). */
+    val needsLookShader: Boolean
+        get() = !effects.isNeutral || mask.isActive || chromaKey.enabled || cutoutUri != null
+
+    /** True when keyframes / animations / opacity move or fade the clip. */
+    val hasMotion: Boolean
+        get() = keyframes.isNotEmpty() || animationIn != null || animationOut != null ||
+            animationCombo != null || opacity < 0.999f
 
     val sourceDurationUs: Long get() = (sourceEndUs - sourceStartUs).coerceAtLeast(0L)
 
@@ -93,6 +115,11 @@ data class TimelineClip(
             fadeInUs = fadeInUs.coerceIn(0L, duration / 2),
             fadeOutUs = fadeOutUs.coerceIn(0L, duration / 2),
             transition = transition.copy(durationUs = transition.durationUs.coerceIn(0L, duration)),
+            opacity = opacity.coerceIn(0f, 1f),
+            keyframes = keyframes.map { it.sanitized() }.sortedBy { it.timeUs },
+            animationDurationUs = animationDurationUs.coerceIn(100_000L, 5_000_000L),
+            mask = mask.sanitized(),
+            chromaKey = chromaKey.sanitized(),
         )
     }
 }
@@ -176,4 +203,27 @@ data class AudioClip(
             fadeOutUs = fadeOutUs.coerceIn(0L, duration / 2),
         )
     }
+}
+
+/**
+ * A video effect on the effects lane. Between [startUs] and [endUs] the effect runs at
+ * [intensity] on whatever the video lane (and clip look) produces; overlapping effects stack.
+ */
+@Serializable
+@SerialName("effect")
+data class EffectItem(
+    override val id: String,
+    override val startUs: Long,
+    override val durationUs: Long,
+    val type: VideoFxType,
+    val intensity: Float = 0.7f,
+    val label: String = "",
+) : TimelineItem {
+    fun sanitized(): EffectItem = copy(
+        startUs = startUs.coerceAtLeast(0L),
+        durationUs = durationUs.coerceAtLeast(TimeUtils.MIN_CLIP_DURATION_US),
+        intensity = intensity.coerceIn(0f, 1f),
+    )
+
+    fun isActiveAt(timeUs: Long): Boolean = timeUs >= startUs && timeUs < endUs
 }

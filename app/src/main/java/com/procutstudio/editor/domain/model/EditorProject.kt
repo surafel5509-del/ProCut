@@ -56,6 +56,14 @@ data class EditorProject(
     val audioTrack: TimelineTrack?
         get() = tracks.firstOrNull { it.type == TrackType.AUDIO }
 
+    val effectTrack: TimelineTrack?
+        get() = tracks.firstOrNull { it.type == TrackType.EFFECT }
+
+    val effectItems: List<EffectItem>
+        get() = effectTrack?.items.orEmpty().filterIsInstance<EffectItem>().sortedBy { it.startUs }
+
+    fun effectsAt(us: Long): List<EffectItem> = effectItems.filter { it.isActiveAt(us) }
+
     val videoClips: List<TimelineClip>
         get() = videoTrack?.items.orEmpty().filterIsInstance<TimelineClip>().sortedBy { it.startUs }
 
@@ -70,8 +78,9 @@ data class EditorProject(
 
     val allItems: List<TimelineItem> get() = tracks.flatMap { it.items }
 
+    /** Effects never extend the project: they only colour what is already on the timeline. */
     val durationUs: Long
-        get() = allItems.maxOfOrNull { it.endUs } ?: 0L
+        get() = allItems.filter { it !is EffectItem }.maxOfOrNull { it.endUs } ?: 0L
 
     val isEmpty: Boolean get() = allItems.isEmpty()
 
@@ -99,6 +108,7 @@ data class EditorProject(
             is AudioClip -> it.assetId == assetId
             is ImageOverlay -> it.assetId == assetId
             is TextOverlay -> false
+            is EffectItem -> false
         }
     }
 
@@ -174,9 +184,16 @@ data class EditorProject(
                 TrackType.TEXT -> track.copy(items = track.items.filterIsInstance<TextOverlay>().map { it.sanitized() })
                 TrackType.OVERLAY -> track.copy(items = track.items.filterIsInstance<ImageOverlay>().map { it.sanitized() })
                 TrackType.AUDIO -> track.copy(items = track.items.filterIsInstance<AudioClip>().map { it.sanitized() })
+                TrackType.EFFECT -> track.copy(items = track.items.filterIsInstance<EffectItem>().map { it.sanitized() })
             }
         }
-        base.copy(tracks = cleanedTracks).reflowVideoTrack()
+        // Projects created before the effects lane existed get an empty one on load.
+        val withEffectLane = if (cleanedTracks.any { it.type == TrackType.EFFECT }) {
+            cleanedTracks
+        } else {
+            cleanedTracks + TimelineTrack(id = IdGenerator.trackId(), type = TrackType.EFFECT)
+        }
+        base.copy(tracks = withEffectLane).reflowVideoTrack()
     }
 
     companion object {
@@ -208,6 +225,7 @@ data class EditorProject(
                 TimelineTrack(id = IdGenerator.trackId(), type = TrackType.OVERLAY),
                 TimelineTrack(id = IdGenerator.trackId(), type = TrackType.TEXT),
                 TimelineTrack(id = IdGenerator.trackId(), type = TrackType.AUDIO),
+                TimelineTrack(id = IdGenerator.trackId(), type = TrackType.EFFECT),
             ),
         )
     }

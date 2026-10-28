@@ -26,7 +26,6 @@ import com.procutstudio.editor.core.util.TimeUtils
 import com.procutstudio.editor.domain.history.EditorCommands
 import com.procutstudio.editor.domain.model.ClipTransform
 import com.procutstudio.editor.domain.model.EditorProject
-import com.procutstudio.editor.domain.model.FilterPreset
 import com.procutstudio.editor.domain.model.FitMode
 import com.procutstudio.editor.domain.model.KenBurnsMotion
 import com.procutstudio.editor.domain.model.TimelineClip
@@ -46,8 +45,6 @@ import kotlin.math.roundToLong
 enum class ClipToolTab(val label: String) {
     TRIM("Trim"),
     TRANSFORM("Transform"),
-    ADJUST("Adjust"),
-    FILTER("Filter"),
     SPEED("Speed"),
     TRANSITION("Transition"),
 }
@@ -109,8 +106,6 @@ fun ClipToolSheet(
             when (tab) {
                 ClipToolTab.TRIM -> TrimTab(project, clip, playheadUs, viewModel, onRequestReplace)
                 ClipToolTab.TRANSFORM -> TransformTab(project, clip, viewModel)
-                ClipToolTab.ADJUST -> AdjustTab(clip, viewModel)
-                ClipToolTab.FILTER -> FilterTab(clip, viewModel)
                 ClipToolTab.SPEED -> SpeedTab(clip, viewModel)
                 ClipToolTab.TRANSITION -> TransitionTab(clip, viewModel)
             }
@@ -379,60 +374,6 @@ internal fun cropForAspect(transform: ClipTransform, sourceAspect: Float, target
         val height = (sourceAspect / targetAspect).coerceIn(0.05f, 1f)
         val inset = (1f - height) / 2f
         transform.copy(cropLeft = 0f, cropTop = inset, cropRight = 1f, cropBottom = 1f - inset)
-    }
-}
-
-@Composable
-private fun AdjustTab(clip: TimelineClip, viewModel: EditorViewModel) {
-    val effects = clip.effects
-    Column {
-        ProCutSlider("Brightness", effects.brightness, -100f..100f,
-            onValueChange = { viewModel.previewEffects(effects.copy(brightness = it)) },
-            onValueChangeFinished = { viewModel.commitTransient(EditorCommands.ADJUST) })
-        ProCutSlider("Contrast", effects.contrast, -100f..100f,
-            onValueChange = { viewModel.previewEffects(effects.copy(contrast = it)) },
-            onValueChangeFinished = { viewModel.commitTransient(EditorCommands.ADJUST) })
-        ProCutSlider("Saturation", effects.saturation, -100f..100f,
-            onValueChange = { viewModel.previewEffects(effects.copy(saturation = it)) },
-            onValueChangeFinished = { viewModel.commitTransient(EditorCommands.ADJUST) })
-        ProCutSlider("Warmth", effects.warmth, -100f..100f,
-            onValueChange = { viewModel.previewEffects(effects.copy(warmth = it)) },
-            onValueChangeFinished = { viewModel.commitTransient(EditorCommands.ADJUST) })
-        ProCutSlider("Hue", effects.hueDegrees, -180f..180f,
-            onValueChange = { viewModel.previewEffects(effects.copy(hueDegrees = it)) },
-            onValueChangeFinished = { viewModel.commitTransient(EditorCommands.ADJUST) })
-        ProCutSlider("Vignette", effects.vignette * 100f, 0f..100f,
-            onValueChange = { viewModel.previewEffects(effects.copy(vignette = it / 100f)) },
-            onValueChangeFinished = { viewModel.commitTransient(EditorCommands.ADJUST) })
-        SecondaryButton(
-            text = "Reset adjustments",
-            onClick = { viewModel.setEffects(VideoEffect(filter = effects.filter)) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
-
-@Composable
-private fun FilterTab(clip: TimelineClip, viewModel: EditorViewModel) {
-    val presets = FilterPreset.entries
-    Column {
-        presets.chunked(3).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
-                row.forEach { preset ->
-                    ProCutChip(
-                        label = preset.label,
-                        selected = clip.effects.filter == preset,
-                        onClick = { viewModel.setEffects(clip.effects.copy(filter = preset)) },
-                    )
-                }
-            }
-        }
-        Text(
-            "Filters combine HSL, RGB, contrast and brightness effects and are rendered by the GPU " +
-                "in both preview and export.",
-            style = MaterialTheme.typography.bodySmall,
-            color = ProCutOnSurfaceMuted,
-        )
     }
 }
 

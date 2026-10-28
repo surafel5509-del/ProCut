@@ -34,6 +34,8 @@ import com.procutstudio.editor.media.export.effects.CurtainOverlay
 import com.procutstudio.editor.media.export.effects.ImageTimelineOverlay
 import com.procutstudio.editor.media.export.effects.KenBurnsEffect
 import com.procutstudio.editor.media.export.effects.TextTimelineOverlay
+import com.procutstudio.editor.media.gl.ClipShaderEffect
+import com.procutstudio.editor.media.gl.TimelineFxEffect
 import com.procutstudio.editor.media.render.OverlayBitmaps
 import com.procutstudio.editor.media.render.TextBitmapRenderer
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -98,10 +100,13 @@ class CompositionBuilder @Inject constructor(
             }
         }
 
-        val compositionOverlays = buildCompositionOverlays(project, spec)
+        // Effects-lane items go first so text and stickers stay crisp on top of them.
+        val compositionEffects = mutableListOf<Effect>()
+        if (project.effectItems.isNotEmpty()) compositionEffects += TimelineFxEffect(project.effectItems)
+        compositionEffects += buildCompositionOverlays(project, spec)
         val builder = Composition.Builder(sequences)
-        if (compositionOverlays.isNotEmpty()) {
-            builder.setEffects(Effects(emptyList(), compositionOverlays))
+        if (compositionEffects.isNotEmpty()) {
+            builder.setEffects(Effects(emptyList(), compositionEffects))
         }
         builder.experimentalSetForceAudioTrack(hasAnyAudio(project, spec))
 
@@ -161,20 +166,28 @@ class CompositionBuilder @Inject constructor(
     ): List<Effect> {
         val effects = mutableListOf<Effect>()
         if (!asset.isImage && clip.speed != 1f) effects += SpeedChangeEffect(clip.speed)
+        // Colour grade, mask, chroma key and cut-out run first, in source space; the shader also
+        // carries opacity because Media3 frames have no alpha channel through the encoder.
+        if (clip.needsLookShader || clip.hasMotion) {
+            effects += ClipShaderEffect(
+                clip = clip,
+                canvasArgb = project.canvasColorArgb,
+                clipStartUs = clip.startUs,
+                includeMotionOpacity = true,
+            )
+        }
         effects += ClipGeometryEffect(
             outputWidth = spec.width,
             outputHeight = spec.height,
             transform = clip.transform,
+            motionClip = clip,
+            clipStartUs = clip.startUs,
         )
         if (asset.isImage && clip.transform.kenBurns != KenBurnsMotion.NONE) {
-            effects += KenBurnsEffect(clip.transform.kenBurns, clip.durationUs)
+            effects += KenBurnsEffect(clip.transform.kenBurns, clip.durationUs, clipStartUs = clip.startUs)
         }
-        effects += ColorEffectMapper.videoEffects(clip.effects)
 
         val overlays = mutableListOf<TextureOverlay>()
-        overlayBitmaps.vignette(clip.effects.effectiveVignette)?.let { vignette ->
-            overlays += FullFrameOverlay(vignette, spec.width, spec.height)
-        }
         val headUs = curtainHeadUs(project, clip, index)
         val tailUs = curtainTailUs(project, clip, index)
         if (headUs > 0L || tailUs > 0L) {
@@ -185,33 +198,11 @@ class CompositionBuilder @Inject constructor(
                 tailUs = tailUs,
                 outputWidth = spec.width,
                 outputHeight = spec.height,
+                clipStartUs = clip.startUs,
             )
         }
         if (overlays.isNotEmpty()) effects += OverlayEffect(overlays)
         return effects
-    }
-
-    /**
-     * Static, frame-filling overlay (vignette).
-     *
-     * The vignette bitmap is small, so it is scaled to the output resolution — Media3 draws an
-     * overlay bitmap 1:1 with the frame, hence the division by the bitmap size.
-     */
-    private class FullFrameOverlay(
-        private val bits: Bitmap,
-        private val outputWidth: Int,
-        private val outputHeight: Int,
-    ) : BitmapOverlay() {
-        override fun getBitmap(presentationTimeUs: Long): Bitmap = bits
-
-        override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings =
-            OverlaySettings.Builder()
-                .setScale(
-                    outputWidth.toFloat() / bits.width.coerceAtLeast(1),
-                    outputHeight.toFloat() / bits.height.coerceAtLeast(1),
-                )
-                .setAlphaScale(1f)
-                .build()
     }
 
     private fun clipAudioProcessors(clip: TimelineClip, asset: MediaAsset): List<AudioProcessor> {

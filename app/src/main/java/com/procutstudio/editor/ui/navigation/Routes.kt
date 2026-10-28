@@ -16,10 +16,6 @@ object Routes {
     const val AUDIO_MIXER = "audio/{projectId}"
     fun audioMixer(projectId: String) = "audio/$projectId"
 
-    const val FILTERS = "filters/{projectId}?clipId={clipId}"
-    fun filters(projectId: String, clipId: String? = null) =
-        if (clipId == null) "filters/$projectId" else "filters/$projectId?clipId=$clipId"
-
     /**
      * The export flow is a single navigation destination hosting three screens (settings →
      * progress → success). Keeping it as one destination means the export ViewModel — and the

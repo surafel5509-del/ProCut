@@ -4,7 +4,9 @@ import android.graphics.Matrix
 import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.MatrixTransformation
+import com.procutstudio.editor.domain.model.ClipMotion
 import com.procutstudio.editor.domain.model.ClipTransform
+import com.procutstudio.editor.domain.model.TimelineClip
 import com.procutstudio.editor.domain.model.FitMode
 import kotlin.math.max
 import kotlin.math.min
@@ -28,6 +30,10 @@ class ClipGeometryEffect(
     private val outputWidth: Int,
     private val outputHeight: Int,
     private val transform: ClipTransform,
+    /** When set, keyframes and in/out/combo animations of this clip move the frame over time. */
+    private val motionClip: TimelineClip? = null,
+    /** Timeline start of [motionClip]; effect timestamps carry the sequence offset. */
+    private val clipStartUs: Long = 0L,
 ) : MatrixTransformation {
 
     private var inputWidth = 0
@@ -79,13 +85,31 @@ class ClipGeometryEffect(
             matrix.postRotate(-safe.rotationDegrees.toFloat())
         }
 
+        // 4b. Keyframes / animations: scale and spin around the clip centre, then slide.
+        var motionX = 0f
+        var motionY = 0f
+        val clip = motionClip
+        if (clip != null && clip.hasMotion) {
+            val state = ClipMotion.stateAt(clip, (presentationTimeUs - clipStartUs).coerceAtLeast(0L))
+            if (state.scale != 1f) matrix.postScale(state.scale, state.scale)
+            if (state.rotationDegrees != 0f) {
+                val aspect = aspectOf(outputWidth, outputHeight)
+                matrix.postScale(aspect, 1f)
+                matrix.postRotate(-state.rotationDegrees)
+                matrix.postScale(1f / aspect, 1f)
+            }
+            motionX = state.offsetX
+            motionY = state.offsetY
+        }
+
         // 5. Pan (UI y grows downwards, NDC y grows upwards).
-        matrix.postTranslate(safe.offsetX, -safe.offsetY)
+        matrix.postTranslate(safe.offsetX + motionX, -(safe.offsetY + motionY))
         return matrix
     }
 
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
-        transform.isIdentity && inputWidth == outputWidth && inputHeight == outputHeight
+        transform.isIdentity && motionClip?.hasMotion != true &&
+            inputWidth == outputWidth && inputHeight == outputHeight
 
     private fun aspectOf(width: Int, height: Int): Float =
         if (width > 0 && height > 0) width.toFloat() / height else 16f / 9f
