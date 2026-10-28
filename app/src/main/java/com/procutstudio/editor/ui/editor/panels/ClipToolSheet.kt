@@ -276,6 +276,55 @@ private fun TransformTab(project: EditorProject, clip: TimelineClip, viewModel: 
             color = ProCutOnSurfaceMuted,
         )
         Spacer(Modifier.height(8.dp))
+        ProCutSlider(
+            label = "Crop left",
+            value = transform.cropLeft,
+            range = 0f..0.9f,
+            valueLabel = "${(transform.cropLeft * 100).toInt()}%",
+            onValueChange = { value ->
+                viewModel.previewTransform(
+                    transform.copy(cropLeft = value.coerceAtMost(transform.cropRight - 0.05f)),
+                )
+            },
+            onValueChangeFinished = { viewModel.commitTransient(EditorCommands.TRANSFORM) },
+        )
+        ProCutSlider(
+            label = "Crop right",
+            value = transform.cropRight,
+            range = 0.1f..1f,
+            valueLabel = "${(transform.cropRight * 100).toInt()}%",
+            onValueChange = { value ->
+                viewModel.previewTransform(
+                    transform.copy(cropRight = value.coerceAtLeast(transform.cropLeft + 0.05f)),
+                )
+            },
+            onValueChangeFinished = { viewModel.commitTransient(EditorCommands.TRANSFORM) },
+        )
+        ProCutSlider(
+            label = "Crop top",
+            value = transform.cropTop,
+            range = 0f..0.9f,
+            valueLabel = "${(transform.cropTop * 100).toInt()}%",
+            onValueChange = { value ->
+                viewModel.previewTransform(
+                    transform.copy(cropTop = value.coerceAtMost(transform.cropBottom - 0.05f)),
+                )
+            },
+            onValueChangeFinished = { viewModel.commitTransient(EditorCommands.TRANSFORM) },
+        )
+        ProCutSlider(
+            label = "Crop bottom",
+            value = transform.cropBottom,
+            range = 0.1f..1f,
+            valueLabel = "${(transform.cropBottom * 100).toInt()}%",
+            onValueChange = { value ->
+                viewModel.previewTransform(
+                    transform.copy(cropBottom = value.coerceAtLeast(transform.cropTop + 0.05f)),
+                )
+            },
+            onValueChangeFinished = { viewModel.commitTransient(EditorCommands.TRANSFORM) },
+        )
+        Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ProCutChip("Reset crop", selected = transform.isFullFrameCrop, onClick = {
                 viewModel.setTransform(transform.copy(cropLeft = 0f, cropTop = 0f, cropRight = 1f, cropBottom = 1f))

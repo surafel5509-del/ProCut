@@ -105,6 +105,10 @@ fun EditorScreen(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri -> uri?.let { viewModel.replaceSelectedClip(it) } }
 
+    val subtitlePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let { viewModel.importSubtitles(it) } }
+
     LaunchedEffect(viewModel) {
         viewModel.messages.collect { snackbarHostState.showSnackbar(it) }
     }
@@ -157,6 +161,11 @@ fun EditorScreen(
                         onRename = { showRename = true },
                         onSave = viewModel::saveNow,
                         onCanvas = { showProjectSheet = true },
+                        onImportSubtitles = {
+                            subtitlePicker.launch(
+                                arrayOf("application/x-subrip", "application/x-srt", "text/plain", "text/*"),
+                            )
+                        },
                         onExport = {
                             viewModel.saveNow()
                             onExport()
@@ -345,6 +354,7 @@ private fun EditorTopBar(
     onRename: () -> Unit,
     onSave: () -> Unit,
     onCanvas: () -> Unit,
+    onImportSubtitles: () -> Unit,
     onExport: () -> Unit,
 ) {
     Row(
@@ -393,6 +403,10 @@ private fun EditorTopBar(
                 DropdownMenuItem(text = { Text("Rename project") }, onClick = { onMoreExpandedChange(false); onRename() })
                 DropdownMenuItem(text = { Text("Save now") }, onClick = { onMoreExpandedChange(false); onSave() })
                 DropdownMenuItem(text = { Text("Canvas & aspect ratio") }, onClick = { onMoreExpandedChange(false); onCanvas() })
+                DropdownMenuItem(
+                    text = { Text("Import subtitles (.srt)") },
+                    onClick = { onMoreExpandedChange(false); onImportSubtitles() },
+                )
             }
         }
         Row(

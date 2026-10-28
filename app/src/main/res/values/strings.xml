@@ -2,6 +2,4 @@
 <resources>
     <string name="app_name">ProCut Studio</string>
     <string name="app_tagline">Professional mobile video editor</string>
-    <string name="export_channel_name">Video export</string>
-    <string name="export_channel_description">Progress for running exports</string>
 </resources>

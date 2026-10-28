@@ -1,5 +1,6 @@
 package com.procutstudio.editor.ui.editor
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
@@ -19,16 +20,20 @@ import com.procutstudio.editor.domain.model.AudioClip
 import com.procutstudio.editor.domain.model.ClipTransform
 import com.procutstudio.editor.domain.model.EditorProject
 import com.procutstudio.editor.domain.model.FitMode
+import com.procutstudio.editor.domain.model.OverlayAnimation
+import com.procutstudio.editor.domain.model.TextAnimationType
 import com.procutstudio.editor.domain.model.TextOverlay
 import com.procutstudio.editor.domain.model.TextStyleSpec
 import com.procutstudio.editor.domain.model.TimelineClip
 import com.procutstudio.editor.domain.model.TransitionConfig
 import com.procutstudio.editor.domain.model.TransitionType
 import com.procutstudio.editor.domain.model.VideoEffect
+import com.procutstudio.editor.domain.subtitles.SrtParser
 import com.procutstudio.editor.domain.timeline.TimelineEditor
 import com.procutstudio.editor.media.export.ColorEffectMapper
 import com.procutstudio.editor.media.playback.PreviewPlayer
 import com.procutstudio.editor.media.render.TextBitmapRenderer
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
@@ -60,6 +65,7 @@ import javax.inject.Inject
  */
 @HiltViewModel
 class EditorViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val repository: ProjectRepository,
     private val mediaImporter: MediaImporter,
     private val player: PreviewPlayer,
@@ -110,7 +116,7 @@ class EditorViewModel @Inject constructor(
                 isLoading = false,
                 playheadUs = 0L,
                 selectedItemId = project.videoClips.firstOrNull()?.id,
-                activePanel = if (project.videoClips.isEmpty()) EditorPanel.NONE else EditorPanel.NONE,
+                activePanel = EditorPanel.NONE,
             )
             syncPlayer(project, 0L)
             refreshHistoryState()
@@ -137,11 +143,9 @@ class EditorViewModel @Inject constructor(
         val clamped = us.coerceIn(0L, project.durationUs)
         stopTicker()
         _uiState.value = state.copy(playheadUs = clamped, isPlaying = false)
-        if (player.seekToTimeline(clamped)) {
-            player.pause()
-        } else {
-            player.pause()
-        }
+        // Photos and gaps have no player surface; seeking the player is best-effort there.
+        player.seekToTimeline(clamped)
+        player.pause()
         applyLiveEffects()
     }
 
@@ -499,6 +503,51 @@ class EditorViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Imports an SRT file and turns every cue into a subtitle-styled text overlay, all in a single
+     * undo step. Cues keep their own timing, so the result can still be edited cue by cue.
+     */
+    fun importSubtitles(uri: Uri) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isBusyMessage = "Importing subtitles…")
+            val raw = runCatching {
+                withContext(ioDispatcher) {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }
+            }.getOrNull()
+            if (raw.isNullOrBlank()) {
+                _uiState.value = _uiState.value.copy(isBusyMessage = null)
+                notify("That subtitle file could not be read.")
+                return@launch
+            }
+            val result = runCatching { SrtParser.parse(raw) }.getOrNull()
+            if (result == null || result.cues.isEmpty()) {
+                _uiState.value = _uiState.value.copy(isBusyMessage = null)
+                notify("No subtitles were found in that file.")
+                return@launch
+            }
+            mutate(EditorCommands.ADD_TEXT) { project ->
+                result.cues.fold(project) { acc, cue ->
+                    TimelineEditor.addTextOverlay(
+                        project = acc,
+                        text = cue.text,
+                        startUs = cue.startUs,
+                        durationUs = cue.durationUs,
+                        style = TextStyleSpec.Subtitle,
+                        animation = OverlayAnimation(
+                            type = TextAnimationType.FADE,
+                            inDurationUs = 150_000L,
+                            outDurationUs = 150_000L,
+                        ),
+                    )
+                }
+            }
+            _uiState.value = _uiState.value.copy(isBusyMessage = null)
+            val skipped = if (result.skippedBlocks > 0) " (${result.skippedBlocks} blocks skipped)" else ""
+            notify("Added ${result.cues.size} subtitles$skipped")
+        }
+    }
+
     fun removeTextOverlay(overlayId: String) {
         mutate(EditorCommands.DELETE) { project -> TimelineEditor.deleteItem(project, overlayId) }
         _uiState.value = _uiState.value.copy(selectedItemId = null, activePanel = EditorPanel.NONE)
@@ -552,7 +601,8 @@ class EditorViewModel @Inject constructor(
                         lastSavedAtMs = System.currentTimeMillis(),
                     )
                 }
-                .onFailure { notify("Save failed: ${it.message}") 
+                .onFailure { error ->
+                    notify("Save failed: ${error.message}")
                     _uiState.value = _uiState.value.copy(isSaving = false)
                 }
         }

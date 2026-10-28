@@ -20,8 +20,8 @@ setting cannot be rendered on a device the UI says so instead of writing a black
 | Video tools | Crop (free + 1:1 / 16:9 / 9:16 / 4:5 presets), rotate 90°, flip H/V, fit/fill/stretch, zoom/pan, **Ken Burns** motion for photos |
 | Colour | 13 filter presets, brightness, contrast, saturation, warmth, hue, vignette — same numbers in preview and export |
 | Audio | Music / SFX import, waveform rendering from decoded PCM, per-clip volume, mute, trims, fade in/out, voice-over recording with on-demand microphone permission |
-| Text | Rich styles (font, size, weight, italic, underline, caps, colour, background, outline, shadow), alignment, position, scale, 6 presets, 7 animations (fade, slide up/left, scale, pop, typewriter) |
-| Overlays | Sticker / logo / image overlays with position, scale, rotation, opacity, rounded corners and animations |
+| Text | Rich styles (font, size, weight, italic, underline, caps, colour, background, outline, shadow), alignment, position, scale, 6 presets, 7 animations (fade, slide up/left, scale, pop, typewriter), **SRT subtitle import** (each cue becomes an editable text overlay) |
+| Overlays | Sticker / logo / image overlays with position, scale, rotation, opacity, rounded corners and animations (image-in-video "picture in picture"; see limitations for video-in-video) |
 | Effects | Fade in/out, transitions (fade to black / white, dip dissolve), speed 0.25×–4× with pitch-correct audio speed |
 | Canvas | 16:9, 9:16, 1:1, 4:5 output and a custom canvas colour behind letterboxed footage |
 | Export | Real Media3 Transformer render, 720p/1080p/4K (device dependent), 24/30/60 fps, configurable bitrate, H.264 + AAC MP4, progress, cancellation, verification, MediaStore gallery save, share sheet |
@@ -132,6 +132,21 @@ schema upgrades.
 
 Cancellation tears the transformer down and removes the temp file.
 
+## Known gaps (tracked, not hidden)
+
+These are the only places where ProCut 1.0 is deliberately smaller than a desktop NLE:
+
+* **Video picture-in-picture.** Image/sticker overlays are fully supported (position, scale,
+  rotation, opacity, rounded corners, animation) and composite into the export. A *second video
+  stream* on top of the main one needs Media3's experimental multi-sequence compositing plus a
+  custom `VideoCompositorSettings` per input; it is not wired up in 1.0 rather than shipping an
+  untested path that would silently drop the overlay.
+* **Blurred canvas background.** The canvas supports solid colours and black; rendering a blurred
+  copy of the footage behind a fitted clip would require compositing two versions of every frame
+  through a second sequence — the same limitation as above.
+* **Free-form transitions.** Fades and dip transitions are rendered per clip; a true cross-dissolve
+  is not possible with the current Media3 API (see below).
+
 ### Things this app does *not* pretend to do
 
 * **Cross-dissolve between two video streams.** Media3 Transformer 1.5 mixes sequences but does not
@@ -161,6 +176,8 @@ Cancellation tears the transformer down and removes the temp file.
 * `ExportSettingsTest` — resolution/aspect/bitrate/fps maths for every supported combination.
 * `OverlayAnimationMathTest` — animation envelopes shared by preview and export.
 * `ProjectDocumentCodecTest` — round-trip fidelity, unknown-field tolerance, version rejection.
+* `ProjectRepositoryTest` — Robolectric + in-memory Room: create/save/rename/duplicate/delete,
+  summary projection, document round trip through the database.
 
 ```bash
 ./gradlew :app:testDebugUnitTest
