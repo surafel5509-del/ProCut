@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base window theme. All visual styling lives in the Compose theme. -->
+    <style name="Theme.ProCutStudio" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/procut_background</item>
+        <item name="android:statusBarColor">@color/procut_background</item>
+        <item name="android:navigationBarColor">@color/procut_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">@color/procut_accent</item>
+    </style>
+</resources>
