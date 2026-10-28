@@ -146,9 +146,16 @@ DEX_COUNT="$(grep -cE ' classes[0-9]*\.dex$' <<<"$ENTRIES")"
 [ "$DEX_COUNT" -ge 1 ] || fail "no dex files found"
 ok "$DEX_COUNT dex file(s)"
 
-# The player layout and the theme resources must survive packaging (they are inflated by name).
-grep -qE 'res/layout/view_player\.xml|res/.*view_player' <<<"$ENTRIES" || fail "player layout missing from APK"
-ok "player surface layout packaged"
+# Release builds rename resource files (shrinkResources), so the resource table is checked by
+# name instead of the zip path.
+RESOURCES_DUMP="$("$AAPT2" dump resources "$APK" 2>/dev/null || true)"
+for resource in layout/view_player mipmap/ic_launcher string/app_name; do
+    if grep -q "$resource" <<<"$RESOURCES_DUMP"; then
+        ok "resource present: $resource"
+    else
+        fail "resource missing from the resource table: $resource"
+    fi
+done
 
 # ---------------------------------------------------------------- app classes in dex
 if [ "$CHECK_CLASSES" = "true" ]; then

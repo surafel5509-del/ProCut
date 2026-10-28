@@ -158,8 +158,9 @@ jobs:
             -camera-back none -camera-front none
           script: |
             set -e
-            echo "── Installing the verified debug APK ──"
-            adb install -r apk/app-debug.apk
+            APK_PATH="$(find apk -name 'app-debug.apk' | head -n 1)"
+            echo "── Installing the verified debug APK: $APK_PATH ──"
+            adb install -r "$APK_PATH"
             echo "── Launching ProCut Studio ──"
             adb logcat -c
             adb shell am start -W -n com.procutstudio.editor.debug/com.procutstudio.editor.MainActivity
