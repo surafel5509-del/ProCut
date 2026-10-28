@@ -39,7 +39,7 @@ class DeviceCapabilities @Inject constructor() {
         if (!supportsH264Encoding()) return false
         for (capabilities in avcVideoCapabilities) {
             val supported: Boolean = try {
-                capabilities.isSizeAndRateSupported(width, height, fps.toDouble())
+                capabilities.areSizeAndRateSupported(width, height, fps.toDouble())
             } catch (error: IllegalArgumentException) {
                 // Encoders reject frame rates outside their supported range with this exception;
                 // fall back to a size-only check instead of failing the whole query.
