@@ -183,8 +183,10 @@ These are the only places where ProCut 1.0 is deliberately smaller than a deskto
    `./gradlew :app:testDebugUnitTest`, assembles the debug and release APKs, and then runs
    `scripts/verify-apk.sh` against both.
 2. **Install and test on Android 8.0 and Android 14** — boots real emulator images
-   (`android-26` and `android-34`), installs the *verified artifact* from job 1, launches
-   `MainActivity`, fails on any `FATAL EXCEPTION`, then runs the Compose instrumentation tests
+   (`android-26` and `android-34`), installs the *verified artifacts* from job 1, launches
+   `MainActivity` from **both the debug and the minified release APK** (the release run is what
+   proves R8 did not break Hilt, Room or kotlinx.serialization at runtime), fails on any
+   `FATAL EXCEPTION`, then runs the Compose instrumentation tests
    (`./gradlew :app:connectedDebugAndroidTest`).
 
 `scripts/verify-apk.sh` is the release checklist, not a smoke test. For each APK it asserts:
@@ -246,9 +248,10 @@ button render through the real theme and report clicks):
 ```
 
 The whole tree is compiled and exercised on every push in GitHub Actions: `:app:testDebugUnitTest`
-must pass, both APKs must pass `scripts/verify-apk.sh`, and the debug APK is installed on **Android
-8.0 (API 26)** and **Android 14 (API 34)** emulators, where it has to launch, stay in the foreground
-without a `FATAL EXCEPTION`, and pass the Compose instrumentation tests. See
+must pass, both APKs must pass `scripts/verify-apk.sh`, and the debug **and** minified release APKs
+are installed on **Android 8.0 (API 26)** and **Android 14 (API 34)** emulators, where each has to
+launch, stay in the foreground without a `FATAL EXCEPTION`, and pass the Compose instrumentation
+tests. See
 [Continuous integration](#continuous-integration).
 
 What the emulator job proves is the *start-up* path on the oldest and a recent Android version plus
