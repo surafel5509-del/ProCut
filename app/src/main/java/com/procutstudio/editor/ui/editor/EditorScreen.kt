@@ -20,8 +20,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Redo
 import androidx.compose.material.icons.outlined.Undo
 import androidx.compose.material.icons.outlined.ZoomIn
@@ -47,6 +49,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -69,7 +74,6 @@ import com.procutstudio.editor.ui.theme.ProCutOutline
 import com.procutstudio.editor.ui.theme.ProCutPrimary
 import com.procutstudio.editor.ui.theme.ProCutSurface
 import com.procutstudio.editor.ui.theme.ProCutSurfaceElevated
-import androidx.compose.material.icons.outlined.Movie
 
 /**
  * The editing workspace: preview, transport, multi-track timeline, tool bar and contextual sheets.
@@ -84,8 +88,24 @@ fun EditorScreen(
     viewModel: EditorViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val appSettings by viewModel.appSettings.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val haptic = LocalHapticFeedback.current
+    val rootView = LocalView.current
+
+    // "Keep screen on" is a real window flag while the editor is visible.
+    LaunchedEffect(appSettings.keepScreenOnWhileEditing) {
+        rootView.keepScreenOn = appSettings.keepScreenOnWhileEditing
+    }
+    DisposableEffect(rootView) {
+        onDispose { rootView.keepScreenOn = false }
+    }
+
+    // Haptics confirm an edit landed; only when the user left it enabled in Settings.
+    val tick: () -> Unit = {
+        if (appSettings.hapticsEnabled) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
 
     var clipSheetTab by remember { mutableStateOf<ClipToolTab?>(null) }
     var showProjectSheet by remember { mutableStateOf(false) }
@@ -181,6 +201,9 @@ fun EditorScreen(
                         renderTextBitmap = viewModel::renderTextOverlayBitmap,
                         onTogglePlayback = viewModel::togglePlayback,
                         onStepFrame = viewModel::stepFrame,
+                        isMuted = state.isPreviewMuted,
+                        onToggleMute = viewModel::togglePreviewMute,
+                        showSafeArea = appSettings.showSafeArea,
                     )
 
                     TimelineHeader(
@@ -202,10 +225,10 @@ fun EditorScreen(
                         onTrimBy = { _, isStart, deltaUs ->
                             if (isStart) viewModel.trimSelectedStartBy(deltaUs) else viewModel.trimSelectedEndBy(deltaUs)
                         },
-                        onTrimDragEnd = viewModel::onTrimDragEnd,
+                        onTrimDragEnd = { tick(); viewModel.onTrimDragEnd() },
                         onMoveClipToIndex = viewModel::moveClipToIndex,
                         onMoveItemTo = viewModel::moveItemTo,
-                        onMoveDragEnd = viewModel::onMoveDragEnd,
+                        onMoveDragEnd = { tick(); viewModel.onMoveDragEnd() },
                         loadThumbnails = viewModel::loadClipThumbnails,
                         loadWaveform = viewModel::loadWaveform,
                         onAddMedia = {
@@ -219,9 +242,9 @@ fun EditorScreen(
                     EditorToolbar(
                         hasSelection = state.selectedItemId != null,
                         canSplit = state.canSplit,
-                        onSplit = viewModel::splitAtPlayhead,
-                        onDuplicate = viewModel::duplicateSelected,
-                        onDelete = { showDeleteConfirm = true },
+                        onSplit = { tick(); viewModel.splitAtPlayhead() },
+                        onDuplicate = { tick(); viewModel.duplicateSelected() },
+                        onDelete = { tick(); showDeleteConfirm = true },
                         onAddMedia = {
                             addMediaPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
@@ -367,7 +390,7 @@ private fun EditorTopBar(
     ) {
         IconButton(onClick = onBack) {
             Icon(
-                androidx.compose.material.icons.Icons.AutoMirrored.Outlined.ArrowBack,
+                Icons.AutoMirrored.Outlined.ArrowBack,
                 contentDescription = "Back",
                 tint = ProCutOnSurface,
             )

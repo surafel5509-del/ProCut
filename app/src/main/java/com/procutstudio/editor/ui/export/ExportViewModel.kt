@@ -1,13 +1,14 @@
 package com.procutstudio.editor.ui.export
 
-import android.content.ContentResolver
 import android.content.Context
+import android.graphics.Bitmap
 import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.procutstudio.editor.core.di.IoDispatcher
+import com.procutstudio.editor.data.media.ThumbnailStore
 import com.procutstudio.editor.data.repository.ProjectRepository
 import com.procutstudio.editor.domain.model.EditorProject
 import com.procutstudio.editor.domain.model.ExportResolution
@@ -21,7 +22,6 @@ import com.procutstudio.editor.media.export.ExportProgressInfo
 import com.procutstudio.editor.media.export.ExportStage
 import com.procutstudio.editor.media.export.VideoExporter
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
@@ -45,6 +45,8 @@ data class ExportUiState(
     val error: String? = null,
     val supportedResolutions: List<ExportResolution> = ExportResolution.entries,
     val warnings: List<String> = emptyList(),
+    /** Poster frame of the first clip, so the export screen can show what is about to be rendered. */
+    val previewBitmap: Bitmap? = null,
 ) {
     val outputSpec: OutputSpec? get() = project?.let { settings.toOutputSpec(it.aspectRatio) }
 
@@ -66,7 +68,7 @@ class ExportViewModel @Inject constructor(
     private val repository: ProjectRepository,
     private val videoExporter: VideoExporter,
     private val deviceCapabilities: DeviceCapabilities,
-    @ApplicationContext private val context: Context,
+    private val thumbnailStore: ThumbnailStore,
     savedStateHandle: SavedStateHandle,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
@@ -97,11 +99,22 @@ class ExportViewModel @Inject constructor(
                     supported.last()
                 },
             ) ?: ExportSettings()
+            val preview = if (project != null) {
+                val asset = project.videoClips.firstNotNullOfOrNull { project.asset(it.assetId) }
+                if (asset != null) {
+                    withContext(ioDispatcher) { runCatching { thumbnailStore.posterFrame(asset, 720) }.getOrNull() }
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
             _uiState.value = _uiState.value.copy(
                 project = project,
                 settings = clampedSettings,
                 isLoading = false,
                 supportedResolutions = supported,
+                previewBitmap = preview,
                 error = if (project == null) "This project could not be opened." else null,
             )
             validateSettings()
@@ -230,7 +243,4 @@ class ExportViewModel @Inject constructor(
             withContext(ioDispatcher) { repository.saveProject(updated.touch()) }
         }
     }
-
-    @Suppress("unused")
-    private fun resolver(): ContentResolver = context.contentResolver
 }

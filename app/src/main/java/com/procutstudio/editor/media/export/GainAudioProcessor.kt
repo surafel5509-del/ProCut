@@ -5,6 +5,7 @@ import androidx.media3.common.audio.AudioProcessor.AudioFormat
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * Applies clip volume plus sample accurate fade-in / fade-out ramps.
@@ -39,6 +40,9 @@ class GainAudioProcessor(
     override fun queueInput(inputBuffer: ByteBuffer) {
         val remaining = inputBuffer.remaining()
         if (remaining <= 0) return
+        // Media3's pipeline carries PCM16 in native (little-endian) order; a freshly allocated
+        // byte buffer defaults to big-endian, so the order is set explicitly before sampling.
+        inputBuffer.order(ByteOrder.nativeOrder())
         val output = replaceOutputBuffer(remaining)
         val sampleRate = inputAudioFormat.sampleRate.coerceAtLeast(1)
         val channels = channelCount.coerceAtLeast(1)

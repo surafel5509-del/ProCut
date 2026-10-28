@@ -11,6 +11,8 @@ import com.procutstudio.editor.core.util.ProCutLogger
 import com.procutstudio.editor.data.media.ImportResult
 import com.procutstudio.editor.data.media.MediaImporter
 import com.procutstudio.editor.data.media.ThumbnailStore
+import com.procutstudio.editor.data.local.prefs.AppSettings
+import com.procutstudio.editor.data.local.prefs.SettingsRepository
 import com.procutstudio.editor.data.media.WaveformStore
 import com.procutstudio.editor.data.repository.ProjectRepository
 import com.procutstudio.editor.domain.history.EditHistory
@@ -43,8 +45,10 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -72,6 +76,7 @@ class EditorViewModel @Inject constructor(
     private val thumbnailStore: ThumbnailStore,
     private val waveformStore: WaveformStore,
     private val textRenderer: TextBitmapRenderer,
+    settingsRepository: SettingsRepository,
     savedStateHandle: SavedStateHandle,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
@@ -83,6 +88,10 @@ class EditorViewModel @Inject constructor(
 
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = messageChannel.receiveAsFlow()
+
+    /** Editor preferences (keep screen on, safe-area guides, haptics) from Settings. */
+    val appSettings: StateFlow<AppSettings> = settingsRepository.settings
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
 
     private var history: EditHistory? = null
     private var autosaveJob: Job? = null
@@ -98,6 +107,13 @@ class EditorViewModel @Inject constructor(
 
     /** Exposes the shared player for the preview surface. */
     fun playerInstance(): androidx.media3.common.Player = player.player
+
+    /** Preview monitor mute — never touches the project, so it is not an undoable edit. */
+    fun togglePreviewMute() {
+        val muted = !_uiState.value.isPreviewMuted
+        _uiState.value = _uiState.value.copy(isPreviewMuted = muted)
+        player.setMasterVolume(if (muted) 0f else 1f)
+    }
 
     fun loadProject() {
         viewModelScope.launch {
@@ -254,12 +270,31 @@ class EditorViewModel @Inject constructor(
 
     // ------------------------------------------------------------------ editing commands
 
+    /**
+     * Splits whatever sits under the playhead.
+     *
+     * When a text/sticker/audio item is selected and the playhead is inside it, that item is split;
+     * otherwise the main video lane is split, which is what the button means 95 % of the time.
+     */
     fun splitAtPlayhead() {
-        if (!_uiState.value.canSplit) {
+        val state = _uiState.value
+        val project = state.project ?: return
+        val selected = state.selectedItem
+        val splitSelected = selected != null &&
+            selected !is TimelineClip &&
+            state.playheadUs > selected.startUs &&
+            state.playheadUs < selected.endUs
+        if (splitSelected && selected != null) {
+            mutate(EditorCommands.SPLIT) { current ->
+                TimelineEditor.splitItem(current, selected.id, state.playheadUs)
+            }
+            return
+        }
+        if (!state.canSplit) {
             notify("Move the playhead inside a clip to split it")
             return
         }
-        mutate(EditorCommands.SPLIT) { project -> TimelineEditor.splitAtPlayhead(project, _uiState.value.playheadUs) }
+        mutate(EditorCommands.SPLIT) { current -> TimelineEditor.splitAtPlayhead(current, state.playheadUs) }
     }
 
     fun deleteSelected() {
@@ -526,7 +561,7 @@ class EditorViewModel @Inject constructor(
                 notify("No subtitles were found in that file.")
                 return@launch
             }
-            mutate(EditorCommands.ADD_TEXT) { project ->
+            mutate(EditorCommands.SUBTITLE_IMPORT) { project ->
                 result.cues.fold(project) { acc, cue ->
                     TimelineEditor.addTextOverlay(
                         project = acc,

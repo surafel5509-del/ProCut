@@ -6,8 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.procutstudio.editor.core.di.IoDispatcher
 import com.procutstudio.editor.data.media.ImportResult
 import com.procutstudio.editor.data.media.MediaImporter
+import com.procutstudio.editor.data.local.prefs.SettingsRepository
 import com.procutstudio.editor.data.repository.ProjectRepository
 import com.procutstudio.editor.domain.model.AspectRatio
+import com.procutstudio.editor.domain.model.ExportSettings
 import com.procutstudio.editor.domain.model.MediaAsset
 import com.procutstudio.editor.domain.timeline.TimelineEditor
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -15,6 +17,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -46,6 +49,7 @@ internal fun defaultProjectName(): String {
 class NewProjectViewModel @Inject constructor(
     private val repository: ProjectRepository,
     private val mediaImporter: MediaImporter,
+    private val settingsRepository: SettingsRepository,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
@@ -100,11 +104,24 @@ class NewProjectViewModel @Inject constructor(
             _uiState.value = state.copy(isCreating = true, error = null)
             runCatching {
                 withContext(ioDispatcher) {
+                    // Defaults from Settings → they seed the document, then each project owns them.
+                    val defaults = runCatching { settingsRepository.settings.first() }.getOrNull()
                     val project = repository.createProject(
                         name = state.name.ifBlank { defaultProjectName() },
                         aspectRatio = state.aspectRatio,
                         assets = state.assets,
-                    )
+                    ).let { created ->
+                        if (defaults == null) {
+                            created
+                        } else {
+                            created.copy(
+                                exportSettings = ExportSettings(
+                                    resolution = defaults.defaultResolution,
+                                    frameRate = defaults.defaultFrameRate,
+                                ),
+                            )
+                        }
+                    }
                     val seeded = TimelineEditor.appendAssets(project, state.assets).touch()
                     repository.saveProject(seeded)
                     seeded.id

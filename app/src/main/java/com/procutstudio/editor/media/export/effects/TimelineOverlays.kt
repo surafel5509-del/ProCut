@@ -41,24 +41,26 @@ abstract class TimedBitmapOverlay(
         Pair(xFraction.coerceIn(0f, 1f) * 2f - 1f, 1f - yFraction.coerceIn(0f, 1f) * 2f)
 
     /**
-     * Builds overlay settings from pixel geometry. Overlay scale is relative to the output frame,
-     * so converting from pixels keeps preview and export pixel-accurate.
+     * Builds overlay settings from a **scale multiplier**.
+     *
+     * Media3 sizes an overlay from its bitmap: the overlay quad is scaled by
+     * `bitmapSize / frameSize`, so a bitmap is drawn 1:1 with the output pixels and
+     * [OverlaySettings] `scale` multiplies that natural size. Passing `1, 1` therefore draws the
+     * bitmap at its exact pixel size instead of stretching it over the frame.
      */
     protected fun baseSettings(
         anchorX: Float,
         anchorY: Float,
-        widthPx: Float,
-        heightPx: Float,
+        scaleX: Float,
+        scaleY: Float,
         alpha: Float,
         rotationDegrees: Float,
     ): OverlaySettings {
-        val sx = (widthPx / outputWidth.toFloat()).coerceIn(0.001f, 8f)
-        val sy = (heightPx / outputHeight.toFloat()).coerceIn(0.001f, 8f)
         val (ndcX, ndcY) = frameAnchor(anchorX, anchorY)
         return OverlaySettings.Builder()
             .setOverlayFrameAnchor(0f, 0f)
             .setBackgroundFrameAnchor(ndcX, ndcY)
-            .setScale(sx, sy)
+            .setScale(scaleX.coerceIn(0.001f, 64f), scaleY.coerceIn(0.001f, 64f))
             .setAlphaScale(alpha.coerceIn(0f, 1f))
             .setRotationDegrees(rotationDegrees)
             .build()
@@ -113,13 +115,14 @@ class TextTimelineOverlay(
 
     override fun settingsAt(localTimeUs: Long): OverlaySettings {
         val state = animationState(localTimeUs)
-        val bitmap = bitmapAt(localTimeUs) ?: transparent
         val style = overlay.style
+        // The bitmap is rasterised at output width, so 1.0 draws it exactly as designed.
+        val scale = (style.scale * state.scaleFactor).coerceIn(0.05f, 8f)
         return baseSettings(
             anchorX = style.positionX + state.offsetX,
             anchorY = style.positionY + state.offsetY,
-            widthPx = bitmap.width * style.scale * state.scaleFactor,
-            heightPx = bitmap.height * style.scale * state.scaleFactor,
+            scaleX = scale,
+            scaleY = scale,
             alpha = state.alpha,
             rotationDegrees = style.rotationDegrees,
         )
@@ -149,13 +152,15 @@ class ImageTimelineOverlay(
 
     override fun settingsAt(localTimeUs: Long): OverlaySettings {
         val state = OverlayAnimationMath.stateAt(overlay.animation, localTimeUs, overlay.durationUs)
-        val widthPx = outputWidth * overlay.scale
-        val heightPx = widthPx * bitmap.height / bitmap.width.toFloat()
+        // The sticker is decoded at roughly the size it should occupy, so scaling the bitmap to the
+        // wanted fraction of the frame is a single division by its real width.
+        val targetWidthPx = outputWidth * overlay.scale * state.scaleFactor
+        val scale = (targetWidthPx / bitmap.width.toFloat()).coerceIn(0.01f, 64f)
         return baseSettings(
             anchorX = overlay.positionX + state.offsetX,
             anchorY = overlay.positionY + state.offsetY,
-            widthPx = widthPx * state.scaleFactor,
-            heightPx = heightPx * state.scaleFactor,
+            scaleX = scale,
+            scaleY = scale,
             alpha = overlay.opacity * state.alpha,
             rotationDegrees = overlay.rotationDegrees,
         )
@@ -175,9 +180,16 @@ class CurtainOverlay(
     private val clipDurationUs: Long,
     private val headUs: Long,
     private val tailUs: Long,
+    private val outputWidth: Int,
+    private val outputHeight: Int,
 ) : BitmapOverlay() {
 
     override fun getBitmap(presentationTimeUs: Long): Bitmap = bits
+
+    /** The curtain is a tiny solid bitmap, so it must be scaled up to cover the whole frame. */
+    private fun coverScaleX(): Float = outputWidth.toFloat() / bits.width.coerceAtLeast(1)
+
+    private fun coverScaleY(): Float = outputHeight.toFloat() / bits.height.coerceAtLeast(1)
 
     override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
         var alpha = 0f
@@ -191,7 +203,7 @@ class CurtainOverlay(
             }
         }
         return OverlaySettings.Builder()
-            .setScale(1f, 1f)
+            .setScale(coverScaleX(), coverScaleY())
             .setAlphaScale(alpha.coerceIn(0f, 1f))
             .build()
     }

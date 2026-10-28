@@ -173,7 +173,7 @@ class CompositionBuilder @Inject constructor(
 
         val overlays = mutableListOf<TextureOverlay>()
         overlayBitmaps.vignette(clip.effects.effectiveVignette)?.let { vignette ->
-            overlays += FullFrameOverlay(vignette)
+            overlays += FullFrameOverlay(vignette, spec.width, spec.height)
         }
         val headUs = curtainHeadUs(project, clip, index)
         val tailUs = curtainTailUs(project, clip, index)
@@ -183,18 +183,35 @@ class CompositionBuilder @Inject constructor(
                 clipDurationUs = clip.durationUs,
                 headUs = headUs,
                 tailUs = tailUs,
+                outputWidth = spec.width,
+                outputHeight = spec.height,
             )
         }
         if (overlays.isNotEmpty()) effects += OverlayEffect(overlays)
         return effects
     }
 
-    /** Static, frame-filling overlay (vignette). */
-    private class FullFrameOverlay(private val bits: Bitmap) : BitmapOverlay() {
+    /**
+     * Static, frame-filling overlay (vignette).
+     *
+     * The vignette bitmap is small, so it is scaled to the output resolution — Media3 draws an
+     * overlay bitmap 1:1 with the frame, hence the division by the bitmap size.
+     */
+    private class FullFrameOverlay(
+        private val bits: Bitmap,
+        private val outputWidth: Int,
+        private val outputHeight: Int,
+    ) : BitmapOverlay() {
         override fun getBitmap(presentationTimeUs: Long): Bitmap = bits
 
         override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings =
-            OverlaySettings.Builder().setScale(1f, 1f).setAlphaScale(1f).build()
+            OverlaySettings.Builder()
+                .setScale(
+                    outputWidth.toFloat() / bits.width.coerceAtLeast(1),
+                    outputHeight.toFloat() / bits.height.coerceAtLeast(1),
+                )
+                .setAlphaScale(1f)
+                .build()
     }
 
     private fun clipAudioProcessors(clip: TimelineClip, asset: MediaAsset): List<AudioProcessor> {
@@ -250,7 +267,7 @@ class CompositionBuilder @Inject constructor(
     ): EditedMediaItemSequence? {
         if (project.canvasColorArgb == COLOR_BLACK) return null
         return runCatching {
-            val colorFile = writeCanvasColorFile(project.canvasColorArgb)
+            val colorFile = writeCanvasColorFile(project.canvasColorArgb, spec.width, spec.height)
             temporaryFiles += colorFile
             val item = EditedMediaItem.Builder(MediaItem.fromUri(colorFile.toURI().toString()))
                 .setDurationUs(project.durationUs.coerceAtLeast(TimeUtils.MICROS_PER_SECOND))
@@ -260,10 +277,12 @@ class CompositionBuilder @Inject constructor(
                     Effects(
                         emptyList(),
                         listOf<Effect>(
+                            // The canvas bitmap is a solid colour, so stretching it to the output
+                            // size is lossless and guarantees the letterbox area is filled.
                             Presentation.createForWidthAndHeight(
                                 spec.width,
                                 spec.height,
-                                Presentation.LAYOUT_SCALE_TO_FIT,
+                                Presentation.LAYOUT_STRETCH_TO_FIT,
                             ),
                         ),
                     ),
@@ -383,9 +402,12 @@ class CompositionBuilder @Inject constructor(
         return clipAudio || project.audioClips.any { !it.isMuted }
     }
 
-    private fun writeCanvasColorFile(colorArgb: Long): File {
+    private fun writeCanvasColorFile(colorArgb: Long, outputWidth: Int, outputHeight: Int): File {
         val file = File(FileUtils.exportsDir(context), "canvas_${System.nanoTime()}.png")
-        val bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+        // A solid colour survives being upscaled, so the PNG is kept small (1/8 of the output).
+        val width = (outputWidth / 8).coerceAtLeast(2)
+        val height = (outputHeight / 8).coerceAtLeast(2)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         bitmap.eraseColor(colorArgb.toInt())
         file.outputStream().use { out -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out) }
         bitmap.recycle()

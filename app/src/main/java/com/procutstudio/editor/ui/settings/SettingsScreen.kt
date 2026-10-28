@@ -129,13 +129,13 @@ fun SettingsScreen(
                 SectionTitle("Editor", modifier = Modifier.padding(top = 12.dp))
                 SettingsToggle(
                     title = "Haptics",
-                    subtitle = "Vibrate when clips snap and trim handles engage.",
+                    subtitle = "Vibrate when a trim, split or move is applied.",
                     checked = settings.hapticsEnabled,
                     onCheckedChange = viewModel::setHaptics,
                 )
                 SettingsToggle(
                     title = "Show safe area",
-                    subtitle = "Draw title/action safe guides in the preview.",
+                    subtitle = "Draw 5 % title-safe and 10 % action-safe guides over the editor preview.",
                     checked = settings.showSafeArea,
                     onCheckedChange = viewModel::setSafeArea,
                 )

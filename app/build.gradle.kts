@@ -55,7 +55,6 @@ android {
             // Media3 marks most of the Transformer/effect API as unstable. Opting in at module
             // level keeps the exporter readable instead of annotating every declaration.
             "-opt-in=androidx.media3.common.util.UnstableApi",
-            "-opt-in=androidx.annotation.OptIn",
         )
     }
 
@@ -148,6 +147,7 @@ dependencies {
 
     // Instrumentation tests
     androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

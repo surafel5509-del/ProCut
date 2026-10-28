@@ -1,5 +1,6 @@
 package com.procutstudio.editor.ui.export
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -26,11 +28,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.procutstudio.editor.core.util.TimeUtils
 import com.procutstudio.editor.domain.model.ExportResolution
 import com.procutstudio.editor.domain.model.FrameRate
+import com.procutstudio.editor.ui.components.AspectFrame
 import com.procutstudio.editor.ui.components.MessageBanner
 import com.procutstudio.editor.ui.components.PrimaryButton
 import com.procutstudio.editor.ui.components.ProCutChip
@@ -95,7 +100,27 @@ fun ExportSettingsScreen(
                     .navigationBarsPadding()
                     .padding(horizontal = 20.dp),
             ) {
-                SectionTitle("Resolution")
+                state.previewBitmap?.let { frame ->
+                    Text(
+                        text = "Preview · first frame of the timeline",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ProCutOnSurfaceMuted,
+                        modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
+                    )
+                    AspectFrame(
+                        aspectRatio = project.aspectRatio.ratio,
+                        modifier = Modifier.fillMaxWidth().height(220.dp),
+                    ) { frameModifier ->
+                        Image(
+                            bitmap = frame.asImageBitmap(),
+                            contentDescription = "Preview of the exported frame",
+                            contentScale = ContentScale.Crop,
+                            modifier = frameModifier,
+                        )
+                    }
+                }
+
+                SectionTitle("Resolution", modifier = Modifier.padding(top = 8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     state.supportedResolutions.forEach { resolution ->
                         ProCutChip(

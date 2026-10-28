@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.view.LayoutInflater
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.NavigateBefore
+import androidx.compose.material.icons.outlined.VolumeOff
+import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.NavigateNext
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,6 +80,9 @@ fun PreviewPane(
     renderTextBitmap: suspend (TextOverlay, Int) -> Bitmap?,
     onTogglePlayback: () -> Unit,
     onStepFrame: (Boolean) -> Unit,
+    isMuted: Boolean = false,
+    onToggleMute: () -> Unit = {},
+    showSafeArea: Boolean = false,
 ) {
     val clip = project.clipAt(playheadUs)
     val geometry = PreviewGeometry.from(clip?.transform)
@@ -196,6 +202,26 @@ fun PreviewPane(
                     }
 
                     CurtainPreview(project = project, playheadUs = playheadUs, clip = clip)
+
+                    // Title/action-safe guides (Settings → "Show safe area"). Drawn last so they
+                    // stay visible on top of every layer, exactly like an NLE overlay.
+                    if (showSafeArea) {
+                        val density = LocalDensity.current
+                        val titleInset = with(density) { (frameWidthPx * 0.05f).toDp() }
+                        val actionInset = with(density) { (frameWidthPx * 0.10f).toDp() }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(titleInset)
+                                .border(1.dp, Color.White.copy(alpha = 0.35f)),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(actionInset)
+                                .border(1.dp, Color.White.copy(alpha = 0.18f)),
+                        )
+                    }
                 }
             }
         }
@@ -206,6 +232,8 @@ fun PreviewPane(
             isPlaying = isPlaying,
             onTogglePlayback = onTogglePlayback,
             onStepFrame = onStepFrame,
+            isMuted = isMuted,
+            onToggleMute = onToggleMute,
         )
     }
 }
@@ -217,6 +245,8 @@ private fun TransportBar(
     isPlaying: Boolean,
     onTogglePlayback: () -> Unit,
     onStepFrame: (Boolean) -> Unit,
+    isMuted: Boolean,
+    onToggleMute: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
@@ -247,12 +277,13 @@ private fun TransportBar(
             Icon(Icons.Outlined.NavigateNext, contentDescription = "Next frame", tint = ProCutOnSurface)
         }
         Spacer(Modifier.weight(1f))
-        Text(
-            text = if (isPlaying) "Playing" else "Paused",
-            style = MaterialTheme.typography.labelSmall,
-            color = ProCutOnSurfaceMuted,
-            modifier = Modifier.width(60.dp),
-        )
+        IconButton(onClick = onToggleMute) {
+            Icon(
+                imageVector = if (isMuted) Icons.Outlined.VolumeOff else Icons.Outlined.VolumeUp,
+                contentDescription = if (isMuted) "Unmute preview" else "Mute preview",
+                tint = if (isMuted) ProCutOnSurfaceMuted else ProCutOnSurface,
+            )
+        }
     }
 }
 

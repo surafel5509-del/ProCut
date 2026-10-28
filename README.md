@@ -16,19 +16,24 @@ setting cannot be rendered on a device the UI says so instead of writing a black
 | --- | --- |
 | Import | Android **Photo Picker** (multi-select) and **Storage Access Framework**; video, photo and audio; files copied into app-private storage with metadata probing (size, rotation, audio track) |
 | Projects | Create, rename, duplicate, reopen, delete; recent-project grid with poster frames; versioned document format with migration hooks |
-| Timeline | Gapless video lane, overlay/text/audio lanes, drag-to-reorder, drag to move, trim handles, split at playhead, delete, duplicate, zoom, snapping playhead |
+| Timeline | Gapless video lane, overlay/text/audio lanes, drag-to-reorder, drag to move, trim handles, split at playhead (video, text, sticker or audio), delete, duplicate, zoom |
 | Video tools | Crop (free + 1:1 / 16:9 / 9:16 / 4:5 presets), rotate 90°, flip H/V, fit/fill/stretch, zoom/pan, **Ken Burns** motion for photos |
 | Colour | 13 filter presets, brightness, contrast, saturation, warmth, hue, vignette — same numbers in preview and export |
-| Audio | Music / SFX import, waveform rendering from decoded PCM, per-clip volume, mute, trims, fade in/out, voice-over recording with on-demand microphone permission |
+| Audio | Music / SFX import, waveform rendering from decoded PCM, per-clip volume, mute, trims, fade in/out, voice-over recording with on-demand microphone permission, monitor mute in the transport bar |
 | Text | Rich styles (font, size, weight, italic, underline, caps, colour, background, outline, shadow), alignment, position, scale, 6 presets, 7 animations (fade, slide up/left, scale, pop, typewriter), **SRT subtitle import** (each cue becomes an editable text overlay) |
 | Overlays | Sticker / logo / image overlays with position, scale, rotation, opacity, rounded corners and animations (image-in-video "picture in picture"; see limitations for video-in-video) |
 | Effects | Fade in/out, transitions (fade to black / white, dip dissolve), speed 0.25×–4× with pitch-correct audio speed |
 | Canvas | 16:9, 9:16, 1:1, 4:5 output and a custom canvas colour behind letterboxed footage |
-| Export | Real Media3 Transformer render, 720p/1080p/4K (device dependent), 24/30/60 fps, configurable bitrate, H.264 + AAC MP4, progress, cancellation, verification, MediaStore gallery save, share sheet |
+| Export | Real Media3 Transformer render, 720p/1080p/4K (device dependent), 24/30/60 fps, configurable bitrate, H.264 + AAC MP4, poster-frame preview of the first clip, progress, cancellation, verification, MediaStore gallery save, share sheet |
 | Undo/redo | Snapshot-based history (depth 80) with human-readable labels |
 
 Ten screens: **Home**, **New project**, **Editor**, **Audio mixer**, **Text editor**,
 **Filters & adjust**, **Export settings**, **Export progress**, **Export success**, **Settings**.
+
+Editor preferences in **Settings** are wired, not decorative: default export resolution and frame
+rate seed every new project, *keep screen on* sets the window flag while the editor is open,
+*safe area* draws 5 % title-safe and 10 % action-safe guides over the preview, and *haptics* fires
+when a trim, split, duplicate or move is committed.
 
 ---
 
@@ -179,9 +184,22 @@ These are the only places where ProCut 1.0 is deliberately smaller than a deskto
 * `ProjectRepositoryTest` — Robolectric + in-memory Room: create/save/rename/duplicate/delete,
   summary projection, document round trip through the database.
 
+`app/src/androidTest` adds a Compose instrumentation smoke test for the shared components (chip and
+button render through the real theme and report clicks):
+
+```bash
+./gradlew :app:connectedDebugAndroidTest
+```
+
 ```bash
 ./gradlew :app:testDebugUnitTest
 ```
+
+These are the project's own tests; run them on your machine after the first Gradle sync. The code in
+this tree was assembled without an Android SDK/emulator available, so the source was validated
+statically (symbol/API cross-checks against the Media3 1.5.1 sources, argument and import scans,
+balanced-syntax scans) rather than by a compile here — expect to fix at most small, local issues on
+the very first build, and open an issue if anything fails to resolve.
 
 ## Project layout
 
@@ -195,8 +213,8 @@ app/
     │   ├── AndroidManifest.xml
     │   ├── java/com/procutstudio/editor/…   (see Architecture)
     │   └── res/                             themes, strings, icons, player layout
-    ├── test/                                JVM unit tests
-    └── androidTest/                         instrumentation test slot
+    ├── test/                                JVM unit + Robolectric integration tests
+    └── androidTest/                         Compose instrumentation smoke tests
 gradle/libs.versions.toml        single source of dependency versions
 ```
 

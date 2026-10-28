@@ -1,7 +1,6 @@
 package com.procutstudio.editor.media.playback
 
 import android.content.Context
-import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Effect
@@ -51,6 +50,7 @@ class PreviewPlayer @Inject constructor(
     private var segments: List<VideoSegment> = emptyList()
     private var signature: Int = 0
     private var pendingSeekUs: Long = 0L
+    private var masterVolume: Float = 1f
 
     val player: ExoPlayer
         get() = exoPlayer ?: createPlayer().also { exoPlayer = it }
@@ -69,6 +69,7 @@ class PreviewPlayer @Inject constructor(
                 /* handleAudioFocus= */ true,
             )
             repeatMode = Player.REPEAT_MODE_OFF
+            volume = masterVolume
             addListener(object : Player.Listener {
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                     applySegmentAudio()
@@ -180,13 +181,14 @@ class PreviewPlayer @Inject constructor(
 
     fun hasVideoAt(us: Long): Boolean = segments.any { us >= it.startUs && us < it.endUs }
 
-    /** Applies clip volume/mute/speed for the segment currently playing. */
+    /** Applies clip volume/mute/speed for the segment currently playing, scaled by master volume. */
     private fun applySegmentAudio() {
         val player = exoPlayer ?: return
         val index = player.currentMediaItemIndex
         if (index < 0 || index >= segments.size) return
         val segment = segments[index]
-        player.volume = if (segment.isMuted) 0f else segment.volume.coerceIn(0f, 1f)
+        val clipGain = if (segment.isMuted) 0f else segment.volume.coerceIn(0f, 1f)
+        player.volume = clipGain * masterVolume
         player.playbackParameters = PlaybackParameters(segment.speed.coerceIn(0.25f, 4f))
     }
 
@@ -197,9 +199,11 @@ class PreviewPlayer @Inject constructor(
             .onFailure { ProCutLogger.w(ProCutLogger.TAG_PLAYBACK, "Live video effects unavailable", it) }
     }
 
-    /** Master volume for the preview (0..1), independent of clip volume. */
+    /** Master volume for the preview (0..1), independent of clip volume; survives playlist rebuilds. */
     fun setMasterVolume(volume: Float) {
-        exoPlayer?.volume = volume.coerceIn(0f, 1f)
+        masterVolume = volume.coerceIn(0f, 1f)
+        val player = exoPlayer ?: return
+        if (segments.isEmpty()) player.volume = masterVolume else applySegmentAudio()
     }
 
     fun release() {

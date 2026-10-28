@@ -38,7 +38,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import com.procutstudio.editor.core.util.TimeUtils
 import com.procutstudio.editor.ui.components.PrimaryButton
 import com.procutstudio.editor.ui.components.SecondaryButton
@@ -221,7 +220,3 @@ private fun playVideo(context: Context, uri: Uri) {
         context.startActivity(Intent.createChooser(intent, "Play video").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
-
-/** Exposes a private export file so other apps can read it (used for legacy file paths). */
-fun contentUriForFile(context: Context, path: String): Uri =
-    FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", java.io.File(path))

@@ -30,6 +30,7 @@ data class EditorUiState(
     val lastSavedAtMs: Long? = null,
     val isImportingSticker: Boolean = false,
     val isBusyMessage: String? = null,
+    val isPreviewMuted: Boolean = false,
 ) {
     val durationUs: Long get() = project?.durationUs ?: 0L
 
@@ -48,10 +49,22 @@ data class EditorUiState(
             return project?.asset(clip.assetId)
         }
 
+    /** True when the playhead sits inside a splittable item (the selection, else the video lane). */
     val canSplit: Boolean
         get() {
-            val clip = clipAtPlayhead ?: return false
-            val offset = playheadUs - clip.startUs
-            return offset >= 100_000L && clip.durationUs - offset >= 100_000L
+            val selection = selectedItem
+            val selectedIsSplittable = selection != null &&
+                selection !is TimelineClip &&
+                playheadUs > selection.startUs &&
+                playheadUs < selection.endUs
+            val candidate: TimelineItem? = if (selectedIsSplittable) selection else clipAtPlayhead
+            val target = candidate ?: return false
+            val offset = playheadUs - target.startUs
+            return offset >= MIN_SPLIT_US && target.durationUs - offset >= MIN_SPLIT_US
         }
+
+    private companion object {
+        /** Both halves must keep at least this much material (100 ms). */
+        const val MIN_SPLIT_US = 100_000L
+    }
 }

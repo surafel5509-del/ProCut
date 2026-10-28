@@ -18,6 +18,7 @@ coil = "2.7.0"
 documentfile = "1.0.1"
 junit = "4.13.2"
 androidxTestJunit = "1.2.1"
+androidxTestRunner = "1.6.2"
 espresso = "3.6.1"
 robolectric = "4.13"
 androidxTestCore = "1.6.1"
@@ -69,6 +70,7 @@ coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coi
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-test-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestJunit" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
 androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidxTestCore" }
 androidx-test-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
