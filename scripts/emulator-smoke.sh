@@ -25,7 +25,9 @@ exec > >(tee -a "$LOG") 2>&1
 
 DEBUG_PACKAGE="com.procutstudio.editor.debug"
 RELEASE_PACKAGE="com.procutstudio.editor"
-ACTIVITY="MainActivity"
+# applicationId differs from the Kotlin package in the debug variant, so the activity class is
+# always spelled out in full.
+ACTIVITY_CLASS="com.procutstudio.editor.MainActivity"
 STAGE="setup"
 
 fail_at() {
@@ -50,7 +52,7 @@ dump_diagnostics() {
 # Installs one APK, launches it and asserts that it is alive with a clean crash buffer.
 smoke_variant() {
     local apk="$1" package="$2" label="$3"
-    local component="${package}/${package}.${ACTIVITY}"
+    local component="${package}/${ACTIVITY_CLASS}"
 
     STAGE="${label}-install"
     echo "── ${label}: installing ${apk} ──"
