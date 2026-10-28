@@ -142,11 +142,17 @@ data class EditorProject(
      * The main video lane has no gaps: clip N starts exactly where clip N-1 ends. Every structural
      * edit calls this so `startUs` can never drift out of sync with the clip order.
      */
+    /**
+     * Re-packs the video lane so it stays gapless.
+     *
+     * The lane's list order is authoritative — drag-and-drop reordering changes the list, and
+     * sorting by the previous `startUs` here would silently undo it. Items are only sorted by time
+     * when a document is loaded (see [sanitized]).
+     */
     fun reflowVideoTrack(): EditorProject {
         val target = videoTrack ?: return this
         var cursor = 0L
         val reflowed = target.items.filterIsInstance<TimelineClip>()
-            .sortedBy { it.startUs }
             .map { clip ->
                 val sanitized = clip.sanitized()
                 val placed = sanitized.copy(startUs = cursor)
@@ -159,7 +165,12 @@ data class EditorProject(
     fun sanitized(): EditorProject = reflowVideoTrack().let { base ->
         val cleanedTracks = base.tracks.map { track ->
             when (track.type) {
-                TrackType.VIDEO -> track.copy(items = track.items.filterIsInstance<TimelineClip>().map { it.sanitized() })
+                // Documents are ordered by time on load; runtime order is the editing order.
+                TrackType.VIDEO -> track.copy(
+                    items = track.items.filterIsInstance<TimelineClip>()
+                        .sortedBy { it.startUs }
+                        .map { it.sanitized() },
+                )
                 TrackType.TEXT -> track.copy(items = track.items.filterIsInstance<TextOverlay>().map { it.sanitized() })
                 TrackType.OVERLAY -> track.copy(items = track.items.filterIsInstance<ImageOverlay>().map { it.sanitized() })
                 TrackType.AUDIO -> track.copy(items = track.items.filterIsInstance<AudioClip>().map { it.sanitized() })

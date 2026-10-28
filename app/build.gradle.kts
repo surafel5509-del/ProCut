@@ -54,9 +54,9 @@ android {
         jvmTarget = "17"
         freeCompilerArgs += listOf(
             "-opt-in=kotlin.RequiresOptIn",
-            // Media3 marks most of the Transformer/effect API as unstable. Opting in at module
-            // level keeps the exporter readable instead of annotating every declaration.
-            "-opt-in=androidx.media3.common.util.UnstableApi",
+            // Media3's @UnstableApi is a Java annotation consumed by Android Lint, not a Kotlin
+            // opt-in marker, so classes that use the Transformer/effect API carry the annotation
+            // themselves (see media/export/*).
         )
     }
 
