@@ -5,6 +5,13 @@
     <!-- Recording a voice-over is opt-in; the permission is requested only when the user starts recording. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Android 8.0/9 only: saving an export into the public Movies folder uses the legacy
+         external-storage write permission. It is requested at export time, never at launch, and is
+         not declared for Android 10+ where MediaStore handles the same job with scoped storage. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <!-- Media is imported with the Android Photo Picker or the Storage Access Framework, and every
          imported file is copied into app-private storage, so no broad storage permission is required. -->
 

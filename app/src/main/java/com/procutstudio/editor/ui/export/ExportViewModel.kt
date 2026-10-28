@@ -217,6 +217,14 @@ class ExportViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(status = ExportStatus.CANCELLED, error = null)
     }
 
+    /**
+     * Surfaces a message on the export settings screen — used for permission refusals and other
+     * situations that stop an export before it starts.
+     */
+    fun reportMessage(message: String) {
+        _uiState.value = _uiState.value.copy(error = message, status = ExportStatus.IDLE)
+    }
+
     fun resetToSettings() {
         _uiState.value = _uiState.value.copy(
             status = ExportStatus.IDLE,

@@ -1,5 +1,10 @@
 package com.procutstudio.editor.ui.export
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,13 +30,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.procutstudio.editor.core.util.TimeUtils
 import com.procutstudio.editor.domain.model.ExportResolution
 import com.procutstudio.editor.domain.model.FrameRate
@@ -63,6 +73,42 @@ fun ExportSettingsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val project = state.project
+    val context = LocalContext.current
+
+    // Saving to the gallery needs WRITE_EXTERNAL_STORAGE on Android 8.0-9 only (API 26-28); the
+    // request is made here, when the user actually taps export, never at launch.
+    fun beginExport() {
+        viewModel.rememberSettings()
+        viewModel.resetToSettings()
+        viewModel.startExport()
+        onStartExport()
+    }
+
+    val legacyWritePermission = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            beginExport()
+        } else {
+            viewModel.reportMessage(
+                "ProCut Studio needs permission to save videos in Movies on this Android version. " +
+                    "Grant it in Settings › Apps › ProCut Studio › Permissions.",
+            )
+        }
+    }
+
+    fun startExportWithPermissions() {
+        val needsPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ) != PackageManager.PERMISSION_GRANTED
+        if (needsPermission) {
+            legacyWritePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            beginExport()
+        }
+    }
 
     Scaffold(containerColor = ProCutBackground) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -199,18 +245,21 @@ fun ExportSettingsScreen(
                     sizeLabel = formatBytes(state.estimatedBytes),
                 )
 
+                state.error?.let { message ->
+                    MessageBanner(
+                        message = message,
+                        modifier = Modifier.padding(top = 8.dp),
+                        isError = true,
+                    )
+                }
+
                 state.warnings.forEach { warning ->
                     MessageBanner(message = warning, modifier = Modifier.padding(top = 8.dp))
                 }
 
                 PrimaryButton(
                     text = if (state.status == ExportStatus.SUCCESS) "Export again" else "Start export",
-                    onClick = {
-                        viewModel.rememberSettings()
-                        viewModel.resetToSettings()
-                        viewModel.startExport()
-                        onStartExport()
-                    },
+                    onClick = { startExportWithPermissions() },
                     enabled = !project.isEmpty,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
                 )

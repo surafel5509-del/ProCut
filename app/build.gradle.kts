@@ -13,9 +13,11 @@ android {
 
     defaultConfig {
         applicationId = "com.procutstudio.editor"
-        // Android 10+: scoped storage means exports can be published to MediaStore without any
-        // storage permission, and Media3's encoder pipeline is stable on every supported device.
-        minSdk = 29
+        // Android 8.0 (API 26) and newer. Import always goes through the Photo Picker / SAF, so no
+        // storage permission is needed for reading on any version. On Android 8.x/9 the gallery
+        // save uses the legacy public Movies folder (WRITE_EXTERNAL_STORAGE, requested at export
+        // time only); Android 10+ publishes through MediaStore with scoped storage and no permission.
+        minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"

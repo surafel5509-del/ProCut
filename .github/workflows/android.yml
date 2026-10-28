@@ -1,0 +1,182 @@
+name: Android CI
+
+# Builds the app, runs the JVM test suite, verifies both APKs, and then installs the debug APK on
+# real emulator images (Android 8.0 and Android 14) and runs the Compose instrumentation tests.
+on:
+  push:
+    branches:
+      - main
+      - "arena/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.daemon=false"
+
+jobs:
+  build:
+    name: Build, test and verify APKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/build-tools"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests (JVM + Robolectric)
+        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest
+
+      - name: Assemble debug and release APKs
+        run: ./gradlew --no-daemon --stacktrace :app:assembleDebug :app:assembleRelease
+
+      - name: Verify debug APK
+        run: |
+          chmod +x scripts/verify-apk.sh
+          ./scripts/verify-apk.sh app/build/outputs/apk/debug/app-debug.apk com.procutstudio.editor.debug
+
+      - name: Verify release APK
+        env:
+          CHECK_CLASSES: "false"
+          VERIFY_RELEASE: "1"
+        run: ./scripts/verify-apk.sh app/build/outputs/apk/release/app-release.apk com.procutstudio.editor
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: procut-studio-apks
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  instrumented:
+    name: Install and test on Android ${{ matrix.api-level }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 26
+            target: google_apis
+            arch: x86
+          - api-level: 34
+            target: google_apis
+            arch: x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Download verified APK
+        uses: actions/download-artifact@v4
+        with:
+          name: procut-studio-apks
+          path: apk
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install, launch and run instrumentation tests
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: ${{ matrix.target }}
+          arch: ${{ matrix.arch }}
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: >-
+            -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+            -camera-back none -camera-front none
+          script: |
+            set -e
+            echo "── Installing the verified debug APK ──"
+            adb install -r apk/app-debug.apk
+            echo "── Launching ProCut Studio ──"
+            adb logcat -c
+            adb shell am start -W -n com.procutstudio.editor.debug/com.procutstudio.editor.MainActivity
+            sleep 15
+            PID="$(adb shell pidof com.procutstudio.editor.debug | tr -d '\r')"
+            if [ -z "$PID" ]; then
+              echo "✘ The app is not running after launch"
+              adb logcat -d | tail -n 200
+              exit 1
+            fi
+            echo "✔ App process alive (pid $PID)"
+            adb exec-out screencap -p > "launch-${{ matrix.api-level }}.png"
+            if adb logcat -d -s AndroidRuntime:E | grep -q "FATAL EXCEPTION"; then
+              echo "✘ Crash during launch"
+              adb logcat -d -s AndroidRuntime:E
+              exit 1
+            fi
+            echo "✔ No fatal exception in logcat"
+            adb shell dumpsys activity activities | grep -m1 "mResumedActivity" || true
+            echo "── Compose instrumentation tests ──"
+            ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest
+
+      - name: Upload emulator screenshots and test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-api-${{ matrix.api-level }}
+          path: |
+            launch-${{ matrix.api-level }}.png
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+          if-no-files-found: ignore
+          retention-days: 14
