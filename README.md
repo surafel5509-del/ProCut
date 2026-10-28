@@ -44,6 +44,10 @@ when a trim, split, duplicate or move is committed.
 * Android SDK **35** (compileSdk/targetSdk 35)
 * A device or emulator running **Android 8.0 (API 26)** or newer
 
+Prebuilt APKs are produced by CI on every push — open the latest green **Actions → Android CI**
+run and download the `procut-studio-apks` artifact (`app-debug.apk` / `app-release.apk`). The
+release APK is signed with the debug key (replace `signingConfig` before publishing anywhere).
+
 Android 8.0 and 8.1 are fully supported: imports use the Photo Picker / Storage Access Framework
 (no storage permission), and exports are written to `Movies/ProCut Studio` with the legacy
 `WRITE_EXTERNAL_STORAGE` permission, which is requested only when you tap **Start export** and is
@@ -241,11 +245,15 @@ button render through the real theme and report clicks):
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-These are the project's own tests; run them on your machine after the first Gradle sync. The code in
-this tree was assembled without an Android SDK/emulator available, so the source was validated
-statically (symbol/API cross-checks against the Media3 1.5.1 sources, argument and import scans,
-balanced-syntax scans) rather than by a compile here — expect to fix at most small, local issues on
-the very first build, and open an issue if anything fails to resolve.
+The whole tree is compiled and exercised on every push in GitHub Actions: `:app:testDebugUnitTest`
+must pass, both APKs must pass `scripts/verify-apk.sh`, and the debug APK is installed on **Android
+8.0 (API 26)** and **Android 14 (API 34)** emulators, where it has to launch, stay in the foreground
+without a `FATAL EXCEPTION`, and pass the Compose instrumentation tests. See
+[Continuous integration](#continuous-integration).
+
+What the emulator job proves is the *start-up* path on the oldest and a recent Android version plus
+the shared-UI tests; a full manual edit → export pass on a physical device is still worth doing
+before you rely on the app for real work (Media3 encoding is hardware dependent).
 
 ## Project layout
 

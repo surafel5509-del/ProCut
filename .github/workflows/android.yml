@@ -160,6 +160,17 @@ jobs:
             mkdir -p build-logs
             bash scripts/emulator-smoke.sh ${{ matrix.api-level }}
 
+      - name: Smoke-test summary
+        if: always()
+        run: |
+          {
+            echo "## ProCut Studio on Android API ${{ matrix.api-level }}"
+            echo '```'
+            grep -E "✔|SMOKE FAILED|Status: ok|mResumedActivity|Installed|Starting [0-9]+ tests|Finished [0-9]+ tests|BUILD (SUCCESSFUL|FAILED)" \
+              "build-logs/emulator-${{ matrix.api-level }}.log" | head -n 40 || echo "no log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish emulator diagnostics
         if: failure()
         env:
@@ -174,6 +185,7 @@ jobs:
           name: emulator-api-${{ matrix.api-level }}
           path: |
             launch-${{ matrix.api-level }}.png
+            build-logs/emulator-${{ matrix.api-level }}.log
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
           if-no-files-found: ignore
