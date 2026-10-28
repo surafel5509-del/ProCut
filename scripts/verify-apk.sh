@@ -14,6 +14,7 @@
 #   EXPECTED_VERSION     default 1.0.0
 #   CHECK_CLASSES        "true" for the non-minified debug APK (class names survive packaging)
 #   VERIFY_RELEASE       "1" to additionally assert the APK is not debuggable
+#   CONTINUE_ON_ERROR    "1" to run every check and report the complete list at the end
 #
 set -euo pipefail
 
@@ -29,7 +30,15 @@ RED=$'\033[31m'; GREEN=$'\033[32m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
 
 ok()   { printf '%s✔%s %s\n' "$GREEN" "$RESET" "$*"; }
 info() { printf '  %s\n' "$*"; }
-fail() { printf '%s✘ %s%s\n' "$RED" "$*" "$RESET" >&2; exit 1; }
+
+FAILED_CHECKS=0
+fail() {
+    printf '%s✘ %s%s\n' "$RED" "$*" "$RESET" >&2
+    FAILED_CHECKS=$((FAILED_CHECKS + 1))
+    if [ "${CONTINUE_ON_ERROR:-0}" != "1" ]; then
+        exit 1
+    fi
+}
 
 section() { printf '\n%s== %s ==%s\n' "$BOLD" "$*" "$RESET"; }
 
@@ -158,4 +167,8 @@ else
 fi
 
 section "Result"
+if [ "$FAILED_CHECKS" -ne 0 ]; then
+    printf '%sAPK FAILED verification: %s%s\n' "$RED" "$APK" "$RESET" >&2
+    exit 1
+fi
 printf '%sAPK verified: %s%s\n' "$GREEN" "$APK" "$RESET"

@@ -50,22 +50,26 @@ jobs:
       - name: Build and test
         run: bash scripts/ci-build.sh
 
-      - name: Publish build diagnostics
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/ci-diagnostics.sh build-logs
-
       - name: Verify debug APK
+        env:
+          CONTINUE_ON_ERROR: "1"
         run: |
           chmod +x scripts/verify-apk.sh
-          ./scripts/verify-apk.sh app/build/outputs/apk/debug/app-debug.apk com.procutstudio.editor.debug
+          mkdir -p build-logs
+          set -o pipefail
+          ./scripts/verify-apk.sh app/build/outputs/apk/debug/app-debug.apk com.procutstudio.editor.debug \
+            2>&1 | tee build-logs/verify-debug.log
 
       - name: Verify release APK
         env:
           CHECK_CLASSES: "false"
           VERIFY_RELEASE: "1"
-        run: ./scripts/verify-apk.sh app/build/outputs/apk/release/app-release.apk com.procutstudio.editor
+          CONTINUE_ON_ERROR: "1"
+        run: |
+          mkdir -p build-logs
+          set -o pipefail
+          ./scripts/verify-apk.sh app/build/outputs/apk/release/app-release.apk com.procutstudio.editor \
+            2>&1 | tee build-logs/verify-release.log
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
@@ -87,6 +91,12 @@ jobs:
             app/build/test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Publish build diagnostics
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci-diagnostics.sh build-logs
 
   instrumented:
     name: Install and test on Android ${{ matrix.api-level }}
