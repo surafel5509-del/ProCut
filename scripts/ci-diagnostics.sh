@@ -56,7 +56,12 @@ import json, os, sys
 limit = int(sys.argv[1])
 path = os.environ["LOG_PATH"]
 data = open(path, encoding="utf-8", errors="replace").read()
-text = data[-limit:]
+if len(data) <= limit:
+    text = data
+else:
+    head = data[: limit // 4]
+    tail = data[-(limit - len(head) - 80):]
+    text = head + "\n\n… [snip] …\n\n" + tail
 title = os.environ.get("CHECK_NAME", "CI diagnostics")
 summary = (
     "The job failed. The tail of the captured output is in the details below.\n\n"
