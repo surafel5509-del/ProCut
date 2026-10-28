@@ -87,6 +87,10 @@ ls -l "launch-${API_LEVEL}.png" 2>/dev/null || true
 
 STAGE="instrumentation"
 echo "── Compose instrumentation tests ──"
+# Gradle builds and installs its own debug APK signed with this runner's debug keystore. The
+# artifact installed above was signed with the build job's keystore, so it is removed first —
+# otherwise the reinstall aborts with INSTALL_FAILED_UPDATE_INCOMPATIBLE.
+adb uninstall "$PACKAGE" > /dev/null 2>&1 || true
 ./gradlew --no-daemon --stacktrace --console=plain :app:connectedDebugAndroidTest
 STATUS=$?
 if [ "$STATUS" -ne 0 ]; then
