@@ -163,7 +163,8 @@ class ExportViewModel @Inject constructor(
         }
         warnings += "Video clips keep their source frame rate. Photos use ${spec.fps} fps."
         if (project.canvasColorArgb != 0xFF000000L) {
-            warnings += "Custom canvas colour is composited as a background layer; letterbox areas may be black on older GPUs."
+            warnings += "The canvas colour is added as a stretched background layer, so it fills the whole frame. " +
+                "Clips stay at their own aspect ratio on top of it."
         }
         _uiState.value = state.copy(warnings = warnings)
     }

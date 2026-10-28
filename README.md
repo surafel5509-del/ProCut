@@ -179,6 +179,7 @@ These are the only places where ProCut 1.0 is deliberately smaller than a deskto
   gapless lane, crop sanitising, Ken Burns persistence.
 * `EditHistoryTest` — undo/redo semantics, redo invalidation, bounded depth.
 * `ExportSettingsTest` — resolution/aspect/bitrate/fps maths for every supported combination.
+* `SrtParserTest` — SRT cue parsing: millisecond timestamps, multi-line cues, blank/garbage input.
 * `OverlayAnimationMathTest` — animation envelopes shared by preview and export.
 * `ProjectDocumentCodecTest` — round-trip fidelity, unknown-field tolerance, version rejection.
 * `ProjectRepositoryTest` — Robolectric + in-memory Room: create/save/rename/duplicate/delete,
@@ -188,11 +189,11 @@ These are the only places where ProCut 1.0 is deliberately smaller than a deskto
 button render through the real theme and report clicks):
 
 ```bash
-./gradlew :app:connectedDebugAndroidTest
-```
-
-```bash
+# JVM tests (no device)
 ./gradlew :app:testDebugUnitTest
+
+# Compose UI test (device or emulator required)
+./gradlew :app:connectedDebugAndroidTest
 ```
 
 These are the project's own tests; run them on your machine after the first Gradle sync. The code in
