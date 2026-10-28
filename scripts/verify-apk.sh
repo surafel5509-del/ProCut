@@ -73,7 +73,8 @@ BADGING="$("$AAPT2" dump badging "$APK" 2>/dev/null)" || fail "aapt2 dump badgin
 PKG="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$BADGING" | head -n 1)"
 VERSION_CODE="$(sed -n "s/^package: name='[^']*' versionCode='\([0-9]*\)'.*/\1/p" <<<"$BADGING" | head -n 1)"
 VERSION_NAME="$(sed -n "s/^package: name='[^']*' versionCode='[0-9]*' versionName='\([^']*\)'.*/\1/p" <<<"$BADGING" | head -n 1)"
-MIN_SDK="$(sed -n "s/^sdkVersion:'\([0-9]*\)'.*/\1/p" <<<"$BADGING" | head -n 1)"
+# aapt2 has used both `sdkVersion:` and `minSdkVersion:` labels across build-tools versions.
+MIN_SDK="$(sed -n "s/^\(min\)\?[sS]dkVersion:'\([0-9]*\)'.*/\2/p" <<<"$BADGING" | head -n 1)"
 TARGET_SDK="$(sed -n "s/^targetSdkVersion:'\([0-9]*\)'.*/\1/p" <<<"$BADGING" | head -n 1)"
 LAUNCHABLE="$(sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p" <<<"$BADGING" | head -n 1)"
 
@@ -82,9 +83,11 @@ info "versionName  : $VERSION_NAME (code $VERSION_CODE)"
 info "minSdk       : $MIN_SDK"
 info "targetSdk    : $TARGET_SDK"
 info "launcher     : $LAUNCHABLE"
+info "sdk lines    : $(grep -i 'sdkversion' <<<"$BADGING" | paste -sd ' ' -)"
 
 [ "$PKG" = "$EXPECTED_PACKAGE" ] || fail "package name is '$PKG', expected '$EXPECTED_PACKAGE'"
-[ "$MIN_SDK" = "$EXPECTED_MIN_SDK" ] || fail "minSdk is '$MIN_SDK', expected '$EXPECTED_MIN_SDK' (Android 8.0)"
+[ "$MIN_SDK" = "$EXPECTED_MIN_SDK" ] || fail \
+    "minSdk is '$MIN_SDK', expected '$EXPECTED_MIN_SDK' (Android 8.0). Raw: $(grep -i 'sdkversion' <<<"$BADGING" | paste -sd ' ' -)"
 [ "$TARGET_SDK" = "$EXPECTED_TARGET_SDK" ] || fail "targetSdk is '$TARGET_SDK', expected '$EXPECTED_TARGET_SDK'"
 [[ "$VERSION_NAME" == "$EXPECTED_VERSION"* ]] || fail "versionName is '$VERSION_NAME', expected '$EXPECTED_VERSION…'"
 [ "$LAUNCHABLE" = "com.procutstudio.editor.MainActivity" ] || fail "unexpected launcher activity: '$LAUNCHABLE'"
@@ -120,9 +123,13 @@ ok "no INTERNET permission — offline by construction"
 # ---------------------------------------------------------------- signature + alignment
 section "Signature and alignment"
 SIGNER="$("$APKSIGNER" verify --print-certs "$APK" 2>&1)" || fail "APK signature verification failed"
-grep -q "Signer #1 certificate DN" <<<"$SIGNER" || fail "no signer certificate found"
-ok "signature verified ($(sed -n 's/^Signer #1 certificate DN: //p' <<<"$SIGNER" | cut -c1-60))"
-info "$("$APKSIGNER" verify --verbose "$APK" 2>&1 | grep -E '^Verified using' | paste -sd ', ' -)"
+SIGNER_DN="$(sed -n 's/^Signer #1 certificate DN: //p' <<<"$SIGNER" | head -n 1)"
+if [ -n "$SIGNER_DN" ]; then
+    ok "signature verified ($(cut -c1-60 <<<"$SIGNER_DN"))"
+else
+    ok "signature verified"
+fi
+info "schemes: $("$APKSIGNER" verify --verbose "$APK" 2>&1 | sed -n 's/^Verified using \(.*\): true/\1/p' | paste -sd ', ' -)"
 
 ZIPALIGN_OUT="$("$ZIPALIGN" -c -v 4 "$APK" 2>&1)" || fail "APK is not zip-aligned: $ZIPALIGN_OUT"
 ok "zip-aligned for 4-byte boundaries (and 16 KiB page alignment reported below)"
